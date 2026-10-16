@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GoTut · Learn Go by doing</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="app-window">
+
+  <!-- LEFT SIDEBAR (transparent, boxless) -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <span class="brand-mark">Go</span>
+      <span class="brand-text">GoTut</span>
+      <button class="icon-btn" id="theme-toggle" title="Toggle theme" aria-label="Toggle theme">◐</button>
+    </div>
+
+    <div class="sidebar-scroll" id="curriculum">
+      <div class="loading">Loading curriculum…</div>
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="progress-line">
+        <div class="progress-bar"><span id="progress-fill"></span></div>
+        <span id="progress-label">0%</span>
+      </div>
+      <button class="ghost-btn block" id="reset-progress">Reset progress</button>
+    </div>
+  </aside>
+
+  <!-- CONTENT COLUMN: floats directly on the app background -->
+  <div class="content-column">
+    <main class="page-body" id="content">
+      <div class="empty-state">
+        <h1>Welcome to GoTut</h1>
+        <p>Pick a topic on the left. Each topic is a short theory page, a quiz, and one or more graded coding exercises that run on your machine.</p>
+        <p class="muted">Tip: press <kbd>Ctrl</kbd>+<kbd>Enter</kbd> in the editor to run your code.</p>
+      </div>
+    </main>
+  </div>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<script src="/app.js"></script>
+</body>
+</html>
