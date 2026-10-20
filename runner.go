@@ -18,9 +18,10 @@ import (
 
 const (
 	maxOutputBytes = 48 * 1024
-	// runTimeout bounds "Run": a learner's main() that loops forever should be
-	// killed quickly. testTimeout is more generous because the first "Check" for
-	// an exercise with third-party dependencies has to download and compile them.
+	// runTimeout bounds "Run program": a learner's main() that loops forever
+	// should be killed quickly. testTimeout is more generous because the first
+	// "Test"/"Submit" for an exercise with third-party dependencies has to
+	// download and compile them.
 	runTimeout  = 20 * time.Second
 	testTimeout = 75 * time.Second
 	maxRunTime  = testTimeout
@@ -33,7 +34,7 @@ type TestResult struct {
 	Output string `json:"output"`
 }
 
-// RunResult is what the browser receives after Run / Check.
+// RunResult is what the browser receives after a program run or a test run.
 type RunResult struct {
 	OK         bool         `json:"ok"`
 	Stdout     string       `json:"stdout"`
@@ -126,7 +127,7 @@ func executeExercise(ex *curriculum.Exercise, files []curriculum.File, mode, std
 	}
 	// `go run` and `go test` both spawn a child process. Killing only the go
 	// tool leaves that child running and holding our stdout/stderr pipes open,
-	// so Run would block forever. Put the whole thing in its own process group
+	// so the command would block forever. Put the whole thing in its own process group
 	// and kill the group; WaitDelay is the belt-and-braces guarantee that Run
 	// returns even if something still holds a pipe.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

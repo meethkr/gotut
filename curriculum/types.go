@@ -34,7 +34,7 @@ type Question struct {
 
 // Exercise is a hands on coding task. Exercises always run inside a fresh
 // temporary Go module. "Tests" are never shown in the editor, they are appended
-// server side when the learner presses "Check".
+// server side when the learner presses "Test" or "Submit".
 type Exercise struct {
 	ID       string   `json:"id"`
 	Title    string   `json:"title"`

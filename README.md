@@ -49,6 +49,26 @@ The reference solution is one click away behind a confirmation, and each exercis
 
 ---
 
+## Checking the curriculum
+
+Two opt-in tests keep the hidden suites honest. They compile the exercises in the same sandbox the UI uses, so the first run may download dependencies:
+
+```bash
+# Every reference solution must pass its hidden tests.
+GOTUT_VERIFY=1 go test -run TestReferenceSolutions -v .
+
+# Every starter must fail at least one hidden test (otherwise the exercise is trivial).
+GOTUT_VERIFY=1 go test -run TestStarterSolutionsFail -v .
+```
+
+Set `GOTUT_VERIFY_MATCH` to a comma-separated list of topic or exercise ids to run a subset:
+
+```bash
+GOTUT_VERIFY=1 GOTUT_VERIFY_MATCH=m1t3,m1t5 go test -run TestReferenceSolutions -v .
+```
+
+---
+
 ## Layout
 
 ```text
