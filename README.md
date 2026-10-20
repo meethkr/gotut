@@ -29,7 +29,7 @@ The first time an exercise uses a third-party package (`chi`, `sqlx`, SQLite) th
 
 | Module                      | Topics   | What you learn                                                                                                                                                                                                                                                              |
 | --------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **1 · Go Fundamentals**     | 18       | packages, variables & zero values, types & conversions, formatted I/O, `if`/`switch`, loops, functions, closures & `defer`, pointers, structs, arrays & slices, slices under the hood, strings/bytes/runes, maps, methods & embedding, interfaces, errors & panic, generics |
+| **1 · Go Fundamentals**     | 18       | packages, variables & types, zero values & conversions, constants, formatted I/O, `if`/`switch` (including `iota`), loops, functions, closures & `defer`, pointers, structs, arrays & slices, slices under the hood, strings/bytes/runes, maps, methods & embedding, interfaces, errors & panic, generics |
 | **2 · Backend Engineering** | 12       | goroutines & `WaitGroup`, channels, `select`/timeouts/mutexes, `context`, JSON & struct tags, `net/http` handlers & routing, `chi` & REST patterns, middleware, HTTP clients, `database/sql`, `sqlx` & transactions, config + `slog` + testing                              |
 | **3 · Capstone Project**    | 5 stages | a URL shortener + analytics API: concurrent store → REST API → middleware/auth → SQL persistence → async worker pool                                                                                                                                                        |
 
@@ -39,10 +39,11 @@ That is **35 topics and 83 graded exercises**. Every topic is a sequence of step
 
 ## How an exercise is graded
 
-- **Run** executes your `main.go` with `go run .` and shows stdout / stderr.
-- **Check** runs automated tests (`go test -v`) against your solution.
+- **Test** runs the hidden automated tests (`go test -v`) and shows a large pass/fail verdict, a per-test list, and the failure message for each failing test. It does not record a submission.
+- **Submit** runs the same tests and marks the exercise complete only when every test passes.
+- **Run program** (in the editor toolbar) executes your `main.go` with `go run .` and shows stdout / stderr. It is there for debugging and stdin-driven exercises.
 
-Both happen in a throwaway temporary module on this machine with a timeout, so a runaway `for {}` cannot hang the app (it is killed after ~25 s).
+Both Test/Submit and Run program happen in a throwaway temporary module on this machine with a timeout, so a runaway `for {}` cannot hang the app (Run program is killed after ~20 s, tests after ~75 s to allow the first dependency download).
 
 The reference solution is one click away behind a confirmation, and each exercise has progressive hints.
 
@@ -56,7 +57,7 @@ The reference solution is one click away behind a confirmation, and each exercis
 ├── runner.go               # sandboxed `go run` / `go test` execution
 ├── curriculum/
 │   ├── types.go            # content model + the "§" → backtick renderer
-│   ├── module1a.go         # Module 1, topics 1–5   (hello/packages, variables, types, fmt, if/switch)
+│   ├── module1a.go         # Module 1, topics 1–5   (hello/packages, variables & types, zero values/conversions/constants, fmt, if/switch/iota)
 │   ├── module1b.go         # Module 1, topics 6–10  (loops, functions, closures/defer, pointers, structs)
 │   ├── module1c.go         # Module 1, topics 11–14 (slices, slice internals, strings, maps)
 │   ├── module1d.go         # Module 1, topics 15–18 (methods/embedding, interfaces, errors, generics)

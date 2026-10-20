@@ -1006,6 +1006,49 @@ html[data-theme="light"] .stdin-box:focus { border-color: rgba(90, 68, 48, 0.38)
   border-top: 1px solid var(--border-soft);
 }
 
+.result-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 15px;
+  margin-bottom: 14px;
+  border: 1px solid;
+  border-left-width: 5px;
+  border-radius: 12px;
+}
+.result-banner.ok {
+  background-color: var(--ok-soft);
+  border-color: var(--ok-border);
+  color: var(--ok-text);
+}
+.result-banner.no {
+  background-color: var(--bad-soft);
+  border-color: var(--bad-border);
+  color: var(--bad-text);
+}
+.result-icon {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 800;
+  background-color: rgba(255, 255, 255, 0.12);
+}
+html[data-theme="light"] .result-icon { background-color: rgba(255, 255, 255, 0.55); }
+.result-text { min-width: 0; }
+.result-title { font-size: 15.5px; font-weight: 750; letter-spacing: -0.01em; }
+.result-sub {
+  margin-top: 2px;
+  color: var(--text);
+  opacity: 0.82;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
 .output-head {
   display: flex;
   align-items: center;
@@ -1060,17 +1103,59 @@ html[data-theme="light"] .output-tab.active { background-color: rgba(90, 68, 48,
 
 .test-line {
   display: flex;
-  gap: 10px;
-  padding: 7px 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 10px;
+  padding: 8px 10px;
   font-family: var(--mono);
   font-size: 12.5px;
   letter-spacing: 0;
   border-bottom: 1px solid var(--border-soft);
 }
 .test-line:last-child { border-bottom: none; }
-.test-line .mark { font-weight: 700; }
-.test-line.pass .mark { color: var(--ok-text); }
-.test-line.fail .mark { color: var(--bad-text); }
+.test-line .mark {
+  flex: 0 0 auto;
+  min-width: 42px;
+  text-align: center;
+  font-size: 10.5px;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  border-radius: 99px;
+}
+.test-line.pass .mark {
+  color: var(--ok-text);
+  background-color: var(--ok-soft);
+  border-color: var(--ok-border);
+}
+.test-line.fail .mark {
+  color: var(--bad-text);
+  background-color: var(--bad-soft);
+  border-color: var(--bad-border);
+}
+.test-line.fail {
+  margin: 3px 0;
+  border: 1px solid var(--bad-border);
+  border-radius: 8px;
+  background-color: var(--bad-soft);
+}
+.test-line .test-name { font-weight: 600; overflow-wrap: anywhere; }
+.test-output {
+  flex-basis: 100%;
+  margin: 4px 0 2px;
+  padding: 8px 10px;
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--code-border);
+  border-radius: 8px;
+  background-color: var(--code-bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 
 /* ---------- misc ---------- */
 

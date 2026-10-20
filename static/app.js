@@ -805,7 +805,7 @@
           render();
           return;
         }
-        if (confirm("Reveal the reference solution? Try Check first if you can.")) {
+        if (confirm("Reveal the reference solution? Try Test first if you can.")) {
           state.solutions[ex.id] = true;
           render();
         }
@@ -855,6 +855,17 @@
     const barSpacer = document.createElement("span");
     barSpacer.className = "spacer";
 
+    // Running the program stays available, but it is deliberately secondary:
+    // Test and Submit are the two actions that judge an exercise.
+    let runProgram = null;
+    const runProgramBtn = document.createElement("button");
+    runProgramBtn.className = "ghost-btn";
+    runProgramBtn.textContent = "▶ Run program";
+    runProgramBtn.title = "go run . — compiles and executes main()";
+    runProgramBtn.addEventListener("click", () => {
+      if (runProgram) runProgram();
+    });
+
     const resetBtn = document.createElement("button");
     resetBtn.className = "ghost-btn";
     resetBtn.textContent = "Reset code";
@@ -869,6 +880,7 @@
 
     bar.appendChild(fileName);
     bar.appendChild(barSpacer);
+    bar.appendChild(runProgramBtn);
     bar.appendChild(resetBtn);
     shell.appendChild(bar);
 
@@ -929,30 +941,33 @@
 
     const stdin = document.createElement("textarea");
     stdin.className = "stdin-box";
-    stdin.placeholder = "stdin (optional) — fed to your program when you press Run";
+    stdin.placeholder = "stdin (optional) — used when you run your program";
     stdin.value = ex.sampleIn || "";
     card.appendChild(stdin);
 
     const row = document.createElement("div");
     row.className = "row";
 
-    const runBtn = document.createElement("button");
-    runBtn.className = "ghost-btn";
-    runBtn.dataset.action = "run";
-    runBtn.textContent = "▶ Run";
-    runBtn.title = "go run . — compiles and executes main()";
+    const testBtn = document.createElement("button");
+    testBtn.className = "ghost-btn";
+    testBtn.dataset.action = "test";
+    testBtn.textContent = "Test";
+    testBtn.title = "Run the hidden tests without recording a submission";
 
-    const checkBtn = document.createElement("button");
-    checkBtn.className = "primary-btn";
-    checkBtn.dataset.action = "check";
-    checkBtn.textContent = "✓ Check";
+    const submitBtn = document.createElement("button");
+    submitBtn.className = "primary-btn";
+    submitBtn.dataset.action = "submit";
+    submitBtn.textContent = "Submit";
+    submitBtn.title = "Run the graded tests; passing marks this exercise complete";
 
     const status = document.createElement("span");
     status.className = "muted";
     status.style.fontSize = "12.5px";
 
-    runBtn.addEventListener("click", () => doExecute(entry, "run", editor.value, stdin.value, runBtn, checkBtn, status));
-    checkBtn.addEventListener("click", () => doExecute(entry, "test", editor.value, stdin.value, runBtn, checkBtn, status));
+    const buttons = { runBtn: runProgramBtn, testBtn: testBtn, submitBtn: submitBtn };
+    runProgram = () => doExecute(entry, "run", editor.value, stdin.value, buttons, status, false);
+    testBtn.addEventListener("click", () => doExecute(entry, "test", editor.value, stdin.value, buttons, status, false));
+    submitBtn.addEventListener("click", () => doExecute(entry, "test", editor.value, stdin.value, buttons, status, true));
 
     const nextBtn = document.createElement("button");
     nextBtn.className = "primary-btn next-btn";
@@ -960,8 +975,8 @@
     nextBtn.disabled = state.index === state.flat.length - 1;
     nextBtn.addEventListener("click", () => goto(state.index + 1));
 
-    row.appendChild(runBtn);
-    row.appendChild(checkBtn);
+    row.appendChild(testBtn);
+    row.appendChild(submitBtn);
     row.appendChild(status);
     row.appendChild(nextBtn);
     card.appendChild(row);
@@ -969,7 +984,16 @@
     // ---- output: part of the editor card, so the results appear right under the
     // code that produced them instead of on a separate island.
     const out = state.output[ex.id];
-    if (out) card.appendChild(renderOutput(ex, out));
+    if (out) {
+      const outputEl = renderOutput(entry, out);
+      card.appendChild(outputEl);
+      if (out.mode === "test" && typeof requestAnimationFrame !== "undefined") {
+        requestAnimationFrame(() => {
+          const banner = outputEl.querySelector(".result-banner");
+          if (banner) banner.scrollIntoView({ block: "nearest" });
+        });
+      }
+    }
 
     frag.appendChild(card);
 
@@ -1024,17 +1048,20 @@
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
       e.preventDefault();
       const card = editor.closest(".card");
-      const sel = e.shiftKey ? '[data-action="check"]' : '[data-action="run"]';
+      const sel = e.shiftKey ? '[data-action="submit"]' : '[data-action="test"]';
       const btn = card && card.querySelector(sel);
       if (btn && !btn.disabled) btn.click();
     }
   }
 
-  async function doExecute(entry, mode, code, stdin, runBtn, checkBtn, status) {
+  async function doExecute(entry, mode, code, stdin, buttons, status, submit) {
     const ex = entry.step.ex;
-    runBtn.disabled = true;
-    checkBtn.disabled = true;
-    status.innerHTML = '<span class="spinner"></span> ' + (mode === "run" ? "Compiling and running…" : "Running tests…");
+    const active = [buttons.testBtn, buttons.submitBtn, buttons.runBtn].filter(Boolean);
+    active.forEach((btn) => { btn.disabled = true; });
+
+    let busy = "Compiling and running…";
+    if (mode === "test") busy = submit ? "Submitting and running the graded tests…" : "Running tests…";
+    status.innerHTML = '<span class="spinner"></span> ' + busy;
 
     let data;
     try {
@@ -1054,35 +1081,96 @@
       }
       data = await res.json();
     } catch (err) {
-      data = { ok: false, stdout: "", stderr: String(err && err.message ? err.message : err), exitCode: -1, tests: [] };
+      data = {
+        ok: false,
+        stdout: "",
+        stderr: String(err && err.message ? err.message : err),
+        exitCode: -1,
+        tests: [],
+        networkError: true,
+      };
     }
 
     let tab = "stdout";
     if (mode === "test") tab = "tests";
     if (data.stderr && !data.stdout && (!data.tests || !data.tests.length)) tab = "stderr";
 
-    state.output[ex.id] = { tab: tab, data: data, mode: mode };
+    state.output[ex.id] = { tab: tab, data: data, mode: mode, submitted: mode === "test" && !!submit };
 
-    runBtn.disabled = false;
-    checkBtn.disabled = false;
+    active.forEach((btn) => { btn.disabled = false; });
 
-    if (mode === "test" && data.ok) {
+    // A passing Test is feedback; only a passing Submit records the exercise.
+    if (mode === "test" && submit && data.ok) {
       markDone(entry.step.key, true);
-    } else {
-      renderOutputInPlace(ex);
     }
     status.textContent = data.timedOut ? "Timed out" : "";
     render();
   }
 
-  function renderOutputInPlace() {
-    /* the whole step re-renders; kept as a hook for clarity */
-  }
-
-  function renderOutput(ex, out) {
+  function renderOutput(entry, out) {
     const data = out.data || {};
+    const tests = data.tests || [];
+    const passed = tests.filter((t) => t.pass).length;
+    const failed = tests.length - passed;
+    const firstFailure = tests.find((t) => !t.pass);
+
     const wrap = document.createElement("div");
     wrap.className = "output";
+
+    // The verdict is the first thing under the buttons. Previously the only
+    // signal was a small badge in the output header, which was easy to miss.
+    if (out.mode === "test") {
+      const banner = document.createElement("div");
+      banner.className = "result-banner " + (data.ok ? "ok" : "no");
+      banner.setAttribute("role", "status");
+      banner.setAttribute("aria-live", "polite");
+
+      const icon = document.createElement("span");
+      icon.className = "result-icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent = data.ok ? "✓" : "✕";
+
+      const text = document.createElement("div");
+      text.className = "result-text";
+
+      const title = document.createElement("div");
+      title.className = "result-title";
+
+      const sub = document.createElement("div");
+      sub.className = "result-sub";
+
+      if (data.networkError) {
+        title.textContent = "Could not reach the runner";
+        sub.textContent = data.stderr || "Check that the GoTut server is still running, then try again.";
+      } else if (data.timedOut) {
+        title.textContent = "Timed out";
+        sub.textContent = "Your program ran for too long. Check for an infinite loop, then try again.";
+      } else if (data.ok) {
+        const alreadyDone = out.submitted || isDone(entry.step.key);
+        title.textContent = out.submitted ? "Submitted — all tests passed" : "All tests passed";
+        if (tests.length) {
+          sub.textContent = passed + "/" + tests.length + " tests passed.";
+        } else {
+          sub.textContent = "The package built successfully.";
+        }
+        if (!alreadyDone) sub.textContent += " Press Submit to record this exercise.";
+        else if (!out.submitted) sub.textContent += " This exercise is already complete.";
+      } else if (tests.length) {
+        title.textContent = failed + " of " + tests.length + " tests failed";
+        sub.textContent = firstFailure
+          ? "First failure: " + firstFailure.name
+          : "Open the Tests tab to see the details.";
+      } else {
+        title.textContent = "Build failed";
+        sub.textContent = "Fix the compiler error, then press Test again. See the Errors tab.";
+      }
+
+      text.appendChild(title);
+      text.appendChild(sub);
+      banner.appendChild(icon);
+      banner.appendChild(text);
+      wrap.appendChild(banner);
+    }
 
     const head = document.createElement("div");
     head.className = "output-head";
@@ -1104,19 +1192,24 @@
       body.className = "";
 
       if (tab === "tests") {
-        const tests = data.tests || [];
         if (!tests.length) {
           const p = document.createElement("pre");
           p.className = "output-body empty";
           p.textContent = data.stderr
             ? "No tests ran — the package probably failed to build. See the Errors tab."
-            : "No tests were run. Press Check to run the graded tests.";
+            : "No tests were run. Press Test to run the graded tests.";
           body.appendChild(p);
         } else {
           tests.forEach((t) => {
             const line = document.createElement("div");
             line.className = "test-line " + (t.pass ? "pass" : "fail");
-            line.innerHTML = '<span class="mark">' + (t.pass ? "PASS" : "FAIL") + "</span><span>" + escapeHtml(t.name) + "</span>";
+            line.innerHTML = '<span class="mark">' + (t.pass ? "PASS" : "FAIL") + '</span><span class="test-name">' + escapeHtml(t.name) + "</span>";
+            if (!t.pass && t.output) {
+              const detail = document.createElement("pre");
+              detail.className = "test-output";
+              detail.textContent = t.output;
+              line.appendChild(detail);
+            }
             body.appendChild(line);
           });
         }
@@ -1176,12 +1269,34 @@
 
   // ----------------------------------------------------------------- boot
 
+  // Two exercises moved topics when types and zero values were split apart.
+  // Their ids (and therefore saved code) are unchanged, but progress keys
+  // include the topic id, so carry completion across to the new location.
+  const PROGRESS_MOVES = {
+    "m1t2:e:m1t2e1": "m1t3:e:m1t2e1",
+    "m1t3:e:m1t3e3": "m1t5:e:m1t3e3",
+  };
+
+  function migrateProgress() {
+    let changed = false;
+    Object.keys(PROGRESS_MOVES).forEach((oldKey) => {
+      if (!state.progress[oldKey]) return;
+      const newKey = PROGRESS_MOVES[oldKey];
+      if (!state.progress[newKey]) state.progress[newKey] = true;
+      delete state.progress[oldKey];
+      changed = true;
+    });
+    if (changed) write(LS_PROGRESS, state.progress);
+  }
+
   function applyTheme(theme) {
     document.documentElement.setAttribute("data-theme", theme);
     write(LS_THEME, theme);
   }
 
   function init() {
+    migrateProgress();
+
     const savedTheme = read(LS_THEME, "dark");
     applyTheme(typeof savedTheme === "string" ? savedTheme : "dark");
 
