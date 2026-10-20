@@ -271,7 +271,7 @@ Write a program whose §main§ function prints exactly this line, including the 
 Hello, Go!
 §§§
 
-Use §fmt.Println§. **Run program** shows the output, and **Test** runs a hidden test
+Use §fmt.Println§. **Run program** shows the output, and **Submit** runs a hidden test
 that captures what your program prints — so the text must match exactly, with no extra
 characters.
 `,

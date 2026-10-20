@@ -805,7 +805,7 @@
           render();
           return;
         }
-        if (confirm("Reveal the reference solution? Try Test first if you can.")) {
+        if (confirm("Reveal the reference solution? Try Submit first if you can.")) {
           state.solutions[ex.id] = true;
           render();
         }
@@ -855,19 +855,24 @@
     const barSpacer = document.createElement("span");
     barSpacer.className = "spacer";
 
-    // Running the program stays available, but it is deliberately secondary:
-    // Test and Submit are the two actions that judge an exercise.
     let runProgram = null;
     const runProgramBtn = document.createElement("button");
-    runProgramBtn.className = "ghost-btn";
+    runProgramBtn.className = "editor-action-btn run-program-btn";
+    runProgramBtn.dataset.action = "run";
     runProgramBtn.textContent = "▶ Run program";
     runProgramBtn.title = "go run . — compiles and executes main()";
     runProgramBtn.addEventListener("click", () => {
       if (runProgram) runProgram();
     });
 
+    const submitBtn = document.createElement("button");
+    submitBtn.className = "editor-action-btn submit-btn";
+    submitBtn.dataset.action = "submit";
+    submitBtn.textContent = "Submit";
+    submitBtn.title = "Run the graded tests; passing marks this exercise complete";
+
     const resetBtn = document.createElement("button");
-    resetBtn.className = "ghost-btn";
+    resetBtn.className = "editor-action-btn reset-btn";
     resetBtn.textContent = "Reset code";
     resetBtn.addEventListener("click", () => {
       if (confirm("Discard your changes and restore the starter code?")) {
@@ -881,6 +886,7 @@
     bar.appendChild(fileName);
     bar.appendChild(barSpacer);
     bar.appendChild(runProgramBtn);
+    bar.appendChild(submitBtn);
     bar.appendChild(resetBtn);
     shell.appendChild(bar);
 
@@ -945,41 +951,15 @@
     stdin.value = ex.sampleIn || "";
     card.appendChild(stdin);
 
-    const row = document.createElement("div");
-    row.className = "row";
+    const status = document.createElement("div");
+    status.className = "run-status";
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    card.appendChild(status);
 
-    const testBtn = document.createElement("button");
-    testBtn.className = "ghost-btn";
-    testBtn.dataset.action = "test";
-    testBtn.textContent = "Test";
-    testBtn.title = "Run the hidden tests without recording a submission";
-
-    const submitBtn = document.createElement("button");
-    submitBtn.className = "primary-btn";
-    submitBtn.dataset.action = "submit";
-    submitBtn.textContent = "Submit";
-    submitBtn.title = "Run the graded tests; passing marks this exercise complete";
-
-    const status = document.createElement("span");
-    status.className = "muted";
-    status.style.fontSize = "12.5px";
-
-    const buttons = { runBtn: runProgramBtn, testBtn: testBtn, submitBtn: submitBtn };
-    runProgram = () => doExecute(entry, "run", editor.value, stdin.value, buttons, status, false);
-    testBtn.addEventListener("click", () => doExecute(entry, "test", editor.value, stdin.value, buttons, status, false));
-    submitBtn.addEventListener("click", () => doExecute(entry, "test", editor.value, stdin.value, buttons, status, true));
-
-    const nextBtn = document.createElement("button");
-    nextBtn.className = "primary-btn next-btn";
-    nextBtn.textContent = "Next →";
-    nextBtn.disabled = state.index === state.flat.length - 1;
-    nextBtn.addEventListener("click", () => goto(state.index + 1));
-
-    row.appendChild(testBtn);
-    row.appendChild(submitBtn);
-    row.appendChild(status);
-    row.appendChild(nextBtn);
-    card.appendChild(row);
+    const buttons = { runBtn: runProgramBtn, submitBtn: submitBtn };
+    runProgram = () => doExecute(entry, "run", editor.value, stdin.value, buttons, status);
+    submitBtn.addEventListener("click", () => doExecute(entry, "test", editor.value, stdin.value, buttons, status));
 
     // ---- output: part of the editor card, so the results appear right under the
     // code that produced them instead of on a separate island.
@@ -996,6 +976,16 @@
     }
 
     frag.appendChild(card);
+
+    const nextRow = document.createElement("div");
+    nextRow.className = "exercise-next-row";
+    const nextBtn = document.createElement("button");
+    nextBtn.className = "primary-btn next-btn";
+    nextBtn.textContent = "Next →";
+    nextBtn.disabled = state.index === state.flat.length - 1;
+    nextBtn.addEventListener("click", () => goto(state.index + 1));
+    nextRow.appendChild(nextBtn);
+    frag.appendChild(nextRow);
 
     // The editor is usually built while still detached from the document, so
     // clientHeight is 0 at that point. Re-fit once the browser has laid it out.
@@ -1048,19 +1038,18 @@
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
       e.preventDefault();
       const card = editor.closest(".card");
-      const sel = e.shiftKey ? '[data-action="submit"]' : '[data-action="test"]';
+      const sel = e.shiftKey ? '[data-action="run"]' : '[data-action="submit"]';
       const btn = card && card.querySelector(sel);
       if (btn && !btn.disabled) btn.click();
     }
   }
 
-  async function doExecute(entry, mode, code, stdin, buttons, status, submit) {
+  async function doExecute(entry, mode, code, stdin, buttons, status) {
     const ex = entry.step.ex;
-    const active = [buttons.testBtn, buttons.submitBtn, buttons.runBtn].filter(Boolean);
+    const active = [buttons.submitBtn, buttons.runBtn].filter(Boolean);
     active.forEach((btn) => { btn.disabled = true; });
 
-    let busy = "Compiling and running…";
-    if (mode === "test") busy = submit ? "Submitting and running the graded tests…" : "Running tests…";
+    const busy = mode === "run" ? "Compiling and running…" : "Running the graded tests…";
     status.innerHTML = '<span class="spinner"></span> ' + busy;
 
     let data;
@@ -1095,12 +1084,11 @@
     if (mode === "test") tab = "tests";
     if (data.stderr && !data.stdout && (!data.tests || !data.tests.length)) tab = "stderr";
 
-    state.output[ex.id] = { tab: tab, data: data, mode: mode, submitted: mode === "test" && !!submit };
+    state.output[ex.id] = { tab: tab, data: data, mode: mode };
 
     active.forEach((btn) => { btn.disabled = false; });
 
-    // A passing Test is feedback; only a passing Submit records the exercise.
-    if (mode === "test" && submit && data.ok) {
+    if (mode === "test" && data.ok) {
       markDone(entry.step.key, true);
     }
     status.textContent = data.timedOut ? "Timed out" : "";
@@ -1146,15 +1134,12 @@
         title.textContent = "Timed out";
         sub.textContent = "Your program ran for too long. Check for an infinite loop, then try again.";
       } else if (data.ok) {
-        const alreadyDone = out.submitted || isDone(entry.step.key);
-        title.textContent = out.submitted ? "Submitted — all tests passed" : "All tests passed";
+        title.textContent = "All tests passed";
         if (tests.length) {
-          sub.textContent = passed + "/" + tests.length + " tests passed.";
+          sub.textContent = passed + "/" + tests.length + " tests passed. This exercise is complete.";
         } else {
-          sub.textContent = "The package built successfully.";
+          sub.textContent = "The package built successfully. This exercise is complete.";
         }
-        if (!alreadyDone) sub.textContent += " Press Submit to record this exercise.";
-        else if (!out.submitted) sub.textContent += " This exercise is already complete.";
       } else if (tests.length) {
         title.textContent = failed + " of " + tests.length + " tests failed";
         sub.textContent = firstFailure
@@ -1162,7 +1147,7 @@
           : "Open the Tests tab to see the details.";
       } else {
         title.textContent = "Build failed";
-        sub.textContent = "Fix the compiler error, then press Test again. See the Errors tab.";
+        sub.textContent = "Fix the compiler error, then press Submit again. See the Errors tab.";
       }
 
       text.appendChild(title);
@@ -1197,7 +1182,7 @@
           p.className = "output-body empty";
           p.textContent = data.stderr
             ? "No tests ran — the package probably failed to build. See the Errors tab."
-            : "No tests were run. Press Test to run the graded tests.";
+            : "No tests were run. Press Submit to run the graded tests.";
           body.appendChild(p);
         } else {
           tests.forEach((t) => {

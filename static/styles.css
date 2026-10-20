@@ -517,6 +517,15 @@ html[data-theme="light"] .icon-btn:hover { background-color: rgba(90, 68, 48, 0.
 
 .next-btn { margin-left: auto; }
 
+.exercise-next-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.run-status { margin-top: 10px; font-size: 12.5px; color: var(--muted); }
+.run-status:empty { display: none; }
+
 /* ---------- step tabs (segmented control) ---------- */
 
 .step-tabs {
@@ -568,13 +577,6 @@ html[data-theme="light"] .step-tab.active {
   padding: 0;
   margin: 0 0 28px;
   min-width: 0;
-}
-
-/* A hairline between the question and the editor, so the two sections stay
-   legible now that neither is enclosed in a panel. */
-.card + .card {
-  border-top: 1px solid var(--border-soft);
-  padding-top: 26px;
 }
 
 /* ---------- theory / markdown ---------- */
@@ -872,8 +874,9 @@ html[data-theme="light"] .editor-shell:focus-within {
 .editor-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 10px 7px 14px;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 9px 10px 9px 14px;
   background-color: var(--editor-bar);
   border-bottom: 1px solid var(--editor-border);
 }
@@ -884,7 +887,44 @@ html[data-theme="light"] .editor-shell:focus-within {
   color: var(--dim);
 }
 .editor-bar .spacer { flex: 1; }
-.editor-bar .ghost-btn { padding: 4px 10px; font-size: 11.5px; }
+
+.editor-action-btn {
+  font-size: 13px;
+  font-weight: 650;
+  padding: 8px 14px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+}
+.editor-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.run-program-btn {
+  color: #79c0ff;
+  background-color: rgba(56, 139, 253, 0.16);
+  border-color: rgba(56, 139, 253, 0.45);
+}
+.run-program-btn:hover:not(:disabled) { background-color: rgba(56, 139, 253, 0.28); }
+html[data-theme="light"] .run-program-btn {
+  color: #0969da;
+  background-color: rgba(9, 105, 218, 0.08);
+  border-color: rgba(9, 105, 218, 0.30);
+}
+html[data-theme="light"] .run-program-btn:hover:not(:disabled) { background-color: rgba(9, 105, 218, 0.16); }
+
+.submit-btn {
+  color: var(--ok-text);
+  background-color: var(--ok-soft);
+  border-color: var(--ok-border);
+}
+.submit-btn:hover:not(:disabled) { background-color: rgba(63, 185, 80, 0.24); }
+html[data-theme="light"] .submit-btn { color: #1a7f37; background-color: rgba(26, 127, 55, 0.10); border-color: rgba(26, 127, 55, 0.32); }
+
+.reset-btn {
+  color: var(--bad-text);
+  background-color: var(--bad-soft);
+  border-color: var(--bad-border);
+}
+.reset-btn:hover:not(:disabled) { background-color: rgba(248, 81, 73, 0.24); }
+html[data-theme="light"] .reset-btn { color: #cf222e; background-color: rgba(207, 34, 46, 0.08); border-color: rgba(207, 34, 46, 0.28); }
 
 .editor-body {
   position: relative;

@@ -39,11 +39,10 @@ That is **35 topics and 83 graded exercises**. Every topic is a sequence of step
 
 ## How an exercise is graded
 
-- **Test** runs the hidden automated tests (`go test -v`) and shows a large pass/fail verdict, a per-test list, and the failure message for each failing test. It does not record a submission.
-- **Submit** runs the same tests and marks the exercise complete only when every test passes.
-- **Run program** (in the editor toolbar) executes your `main.go` with `go run .` and shows stdout / stderr. It is there for debugging and stdin-driven exercises.
+- **Submit** runs the hidden automated tests (`go test -v`), shows a large pass/fail verdict, a per-test list, and the failure message for each failing test, and marks the exercise complete only when every test passes.
+- **Run program** (also in the editor toolbar) executes your `main.go` with `go run .` and shows stdout / stderr. It is there for debugging and stdin-driven exercises.
 
-Both Test/Submit and Run program happen in a throwaway temporary module on this machine with a timeout, so a runaway `for {}` cannot hang the app (Run program is killed after ~20 s, tests after ~75 s to allow the first dependency download).
+Both Submit and Run program happen in a throwaway temporary module on this machine with a timeout, so a runaway `for {}` cannot hang the app (Run program is killed after ~20 s, tests after ~75 s to allow the first dependency download).
 
 The reference solution is one click away behind a confirmation, and each exercise has progressive hints.
 

@@ -3476,7 +3476,7 @@ func main() {
 				Prompt: `This exercise is about a skill, not a concept: **reading a failing test suite and
 fixing the code it describes.**
 
-The three functions below are wrong in four separate ways. Press **Test**, read the
+The three functions below are wrong in four separate ways. Press **Submit**, read the
 failures carefully, and fix them until everything passes. This is exactly the loop you
 will run a hundred times a week.
 
@@ -3736,7 +3736,7 @@ func TestStdDevTable(t *testing.T) {
 					"§Median§: §sorted := make([]float64, len(nums)); copy(sorted, nums); sort.Float64s(sorted)§.",
 					"Even count: §(sorted[n/2-1] + sorted[n/2]) / 2§. Odd count: §sorted[n/2]§.",
 					"§StdDev§ wraps the result in §math.Sqrt§.",
-					"Press §Test§ after each fix — the failures narrow down as you go, which is the workflow this exercise is teaching.",
+					"Press §Submit§ after each fix — the failures narrow down as you go, which is the workflow this exercise is teaching.",
 				},
 				Solution: `package main
 
