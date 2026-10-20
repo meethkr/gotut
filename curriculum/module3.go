@@ -370,6 +370,205 @@ func TestConcurrentAccess(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestCreateSameURLTwiceGivesDistinctCodes(t *testing.T) {
+	s := NewShortener()
+	const u = "https://example.com/duplicate"
+
+	var codes []string
+	for i := 0; i < 3; i++ {
+		code, err := s.Create(u)
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		codes = append(codes, code)
+	}
+
+	seen := map[string]bool{}
+	for _, code := range codes {
+		if seen[code] {
+			t.Fatalf("duplicate code %q for the same URL", code)
+		}
+		seen[code] = true
+		got, err := s.Resolve(code)
+		if err != nil || got != u {
+			t.Fatalf("Resolve(%q) = %q, %v; want %q", code, got, err, u)
+		}
+	}
+	if s.Len() != len(codes) {
+		t.Fatalf("Len = %d, want %d", s.Len(), len(codes))
+	}
+}
+
+func TestCreateResolveRoundTrip(t *testing.T) {
+	s := NewShortener()
+	urls := []string{
+		"https://go.dev/doc/?q=1#top",
+		"https://example.com/a%20b?x=1&y=2",
+		"https://例え.jp/パス",
+	}
+
+	seen := map[string]bool{}
+	for _, u := range urls {
+		code, err := s.Create(u)
+		if err != nil {
+			t.Fatalf("Create(%q): %v", u, err)
+		}
+		if seen[code] {
+			t.Fatalf("duplicate code %q", code)
+		}
+		seen[code] = true
+		got, err := s.Resolve(code)
+		if err != nil || got != u {
+			t.Fatalf("Resolve(%q) = %q, %v; want %q", code, got, err, u)
+		}
+	}
+}
+
+func TestCodesAreURLSafe(t *testing.T) {
+	s := NewShortener()
+	for i := 0; i < 200; i++ {
+		code, err := s.Create("https://example.com")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if code == "" {
+			t.Fatal("Create returned an empty code")
+		}
+		for _, r := range code {
+			if r <= ' ' || r > '~' || strings.ContainsRune("/?#%", r) {
+				t.Fatalf("code %q contains unsafe character %q", code, r)
+			}
+		}
+	}
+}
+
+func TestRejectedCreateIsNotStored(t *testing.T) {
+	s := NewShortener()
+	for _, bad := range []string{"", " ", "\t", "\n", "\u00a0"} {
+		if _, err := s.Create(bad); !errors.Is(err, ErrEmptyURL) {
+			t.Fatalf("Create(%q) = %v, want ErrEmptyURL", bad, err)
+		}
+	}
+	if s.Len() != 0 {
+		t.Fatalf("Len = %d after rejected creates, want 0", s.Len())
+	}
+	if _, err := s.Create("https://go.dev"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if s.Len() != 1 {
+		t.Fatalf("Len = %d, want 1", s.Len())
+	}
+}
+
+func TestClicksArePerCode(t *testing.T) {
+	s := NewShortener()
+	a, err := s.Create("https://a.dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.Create("https://b.dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 5; i++ {
+		if err := s.Record(a); err != nil {
+			t.Fatalf("Record: %v", err)
+		}
+	}
+	if n, err := s.Clicks(a); err != nil || n != 5 {
+		t.Fatalf("Clicks(a) = %d, %v; want 5", n, err)
+	}
+	if n, err := s.Clicks(b); err != nil || n != 0 {
+		t.Fatalf("Clicks(b) = %d, %v; want 0", n, err)
+	}
+	if err := s.Record("missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Record(missing) = %v, want ErrNotFound", err)
+	}
+	if n, _ := s.Clicks(a); n != 5 {
+		t.Fatalf("Clicks(a) changed to %d after a failed Record", n)
+	}
+}
+
+func TestConcurrentRecordIsExact(t *testing.T) {
+	s := NewShortener()
+	code, err := s.Create("https://go.dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const goroutines = 20
+	const each = 25
+
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < each; i++ {
+				if err := s.Record(code); err != nil {
+					t.Errorf("Record: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	n, err := s.Clicks(code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != goroutines*each {
+		t.Fatalf("clicks = %d, want %d (lost updates?)", n, goroutines*each)
+	}
+}
+
+func TestEmptyCodeIsNotFound(t *testing.T) {
+	s := NewShortener()
+	if _, err := s.Resolve(""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Resolve(\"\") = %v, want ErrNotFound", err)
+	}
+	if err := s.Record(""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Record(\"\") = %v, want ErrNotFound", err)
+	}
+	if _, err := s.Clicks(""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Clicks(\"\") = %v, want ErrNotFound", err)
+	}
+}
+
+func TestConcurrentCreateResolve(t *testing.T) {
+	s := NewShortener()
+	const goroutines = 10
+	const each = 20
+
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < each; i++ {
+				u := "https://example.com/" + strings.Repeat("p", (g+i)%5)
+				code, err := s.Create(u)
+				if err != nil {
+					t.Errorf("Create: %v", err)
+					return
+				}
+				got, err := s.Resolve(code)
+				if err != nil || got != u {
+					t.Errorf("Resolve(%q) = %q, %v; want %q", code, got, err, u)
+					return
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+
+	if s.Len() != goroutines*each {
+		t.Fatalf("Len = %d, want %d", s.Len(), goroutines*each)
+	}
+}
 `,
 				}},
 				Hints: []string{
@@ -934,6 +1133,176 @@ func TestStatsDoesNotRecordAClick(t *testing.T) {
 	}
 	_ = io.Discard
 	_ = bytes.NewBuffer
+}
+
+func doRequest(t *testing.T, h http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestShortenCreatesDistinctCodes(t *testing.T) {
+	st, h := newTestAPI(t)
+	seen := map[string]bool{}
+
+	for i := 0; i < 3; i++ {
+		rec := doRequest(t, h, http.MethodPost, "/shorten", §{"url":"https://go.dev"}§)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create %d: status = %d, want 201 (body %s)", i, rec.Code, rec.Body.String())
+		}
+		if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+			t.Fatalf("create %d: Content-Type = %q, want JSON", i, ct)
+		}
+		var resp struct {
+			Code     string §json:"code"§
+			ShortURL string §json:"short_url"§
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("create %d: body: %v (%s)", i, err, rec.Body.String())
+		}
+		if resp.Code == "" {
+			t.Fatalf("create %d: empty code", i)
+		}
+		if seen[resp.Code] {
+			t.Fatalf("create %d: duplicate code %q", i, resp.Code)
+		}
+		seen[resp.Code] = true
+		if resp.ShortURL != "http://sho.rt/"+resp.Code {
+			t.Fatalf("create %d: short_url = %q, want %q", i, resp.ShortURL, "http://sho.rt/"+resp.Code)
+		}
+	}
+	if len(st.urls) != 3 {
+		t.Fatalf("store has %d links, want 3", len(st.urls))
+	}
+}
+
+func TestShortenErrorEnvelope(t *testing.T) {
+	_, h := newTestAPI(t)
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"empty body", ""},
+		{"empty object", §{}§},
+		{"null", "null"},
+		{"array", "[]"},
+		{"wrong type", §{"url":123}§},
+		{"blank url", §{"url":" \t "}§},
+	}
+	for _, c := range cases {
+		rec := doRequest(t, h, http.MethodPost, "/shorten", c.body)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400 (body %s)", c.name, rec.Code, rec.Body.String())
+			continue
+		}
+		var env map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+			t.Errorf("%s: error body is not JSON: %v (%s)", c.name, err, rec.Body.String())
+			continue
+		}
+		if msg, _ := env["error"].(string); msg == "" {
+			t.Errorf("%s: missing error envelope: %s", c.name, rec.Body.String())
+		}
+	}
+}
+
+func TestRedirectAndStatsFlow(t *testing.T) {
+	st, h := newTestAPI(t)
+
+	rec := doRequest(t, h, http.MethodPost, "/shorten", §{"url":"https://go.dev"}§)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("shorten: status = %d (body %s)", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		Code string §json:"code"§
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Code == "" {
+		t.Fatal("shorten returned an empty code")
+	}
+
+	for i := 1; i <= 3; i++ {
+		got := doRequest(t, h, http.MethodGet, "/"+created.Code, "")
+		if got.Code != http.StatusFound {
+			t.Fatalf("redirect %d: status = %d, want 302", i, got.Code)
+		}
+		if loc := got.Header().Get("Location"); loc != "https://go.dev" {
+			t.Fatalf("redirect %d: Location = %q", i, loc)
+		}
+		if st.clicks[created.Code] != i {
+			t.Fatalf("redirect %d: clicks = %d, want %d", i, st.clicks[created.Code], i)
+		}
+	}
+
+	stats := doRequest(t, h, http.MethodGet, "/stats/"+created.Code, "")
+	if stats.Code != http.StatusOK {
+		t.Fatalf("stats: status = %d (body %s)", stats.Code, stats.Body.String())
+	}
+	if ct := stats.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("stats: Content-Type = %q, want JSON", ct)
+	}
+	var got struct {
+		Code   string §json:"code"§
+		URL    string §json:"url"§
+		Clicks int    §json:"clicks"§
+	}
+	if err := json.Unmarshal(stats.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Code != created.Code || got.URL != "https://go.dev" || got.Clicks != 3 {
+		t.Fatalf("stats = %+v, want code %q, url https://go.dev, clicks 3", got, created.Code)
+	}
+}
+
+func TestStatsNeverRecordsClicks(t *testing.T) {
+	st, h := newTestAPI(t)
+	st.urls["abc"] = "https://example.com"
+
+	for i := 0; i < 3; i++ {
+		rec := doRequest(t, h, http.MethodGet, "/stats/abc", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("stats %d: status = %d (body %s)", i, rec.Code, rec.Body.String())
+		}
+	}
+	if st.clicks["abc"] != 0 {
+		t.Fatalf("stats recorded clicks: %d", st.clicks["abc"])
+	}
+}
+
+func TestUnsupportedMethods(t *testing.T) {
+	_, h := newTestAPI(t)
+	cases := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{"put shorten", http.MethodPut, "/shorten"},
+		{"delete shorten", http.MethodDelete, "/shorten"},
+		{"post stats", http.MethodPost, "/stats/abc"},
+		{"delete redirect", http.MethodDelete, "/abc"},
+		{"put redirect", http.MethodPut, "/abc"},
+	}
+	for _, c := range cases {
+		rec := doRequest(t, h, c.method, c.path, "")
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s: status = %d, want 405", c.name, rec.Code)
+		}
+	}
+}
+
+func TestUnknownPathsReturn404(t *testing.T) {
+	_, h := newTestAPI(t)
+	for _, path := range []string{"/", "/a/b", "/stats", "/stats/abc/extra"} {
+		rec := doRequest(t, h, http.MethodGet, path, "")
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("GET %s: status = %d, want 404", path, rec.Code)
+		}
+	}
 }
 `,
 				}},
@@ -1530,10 +1899,12 @@ var _ = alphabet
 					Content: `package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -1641,6 +2012,223 @@ func TestPublicRoutesDoNotNeedAKey(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown code status = %d, want 404", rec.Code)
 	}
+}
+
+func TestAPIKeyContextHelpers(t *testing.T) {
+	ctx := context.Background()
+	if got := APIKeyFrom(ctx); got != "" {
+		t.Fatalf("APIKeyFrom(empty) = %q, want empty", got)
+	}
+
+	ctx = WithAPIKey(ctx, "first")
+	if got := APIKeyFrom(ctx); got != "first" {
+		t.Fatalf("APIKeyFrom = %q, want first", got)
+	}
+
+	child := WithAPIKey(ctx, "second")
+	if got := APIKeyFrom(child); got != "second" {
+		t.Fatalf("APIKeyFrom(child) = %q, want second", got)
+	}
+	if got := APIKeyFrom(ctx); got != "first" {
+		t.Fatalf("parent context was mutated: %q", got)
+	}
+}
+
+func TestRequestIDOnEveryResponse(t *testing.T) {
+	st, h := newAPI(t)
+	st.urls["abc"] = "https://example.com"
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		key    string
+	}{
+		{"shorten", http.MethodPost, "/shorten", §{"url":"https://go.dev"}§, ""},
+		{"bad json", http.MethodPost, "/shorten", "{", ""},
+		{"redirect", http.MethodGet, "/abc", "", ""},
+		{"unknown redirect", http.MethodGet, "/missing", "", ""},
+		{"stats authorized", http.MethodGet, "/stats/abc", "", testKey},
+		{"stats unauthorized", http.MethodGet, "/stats/abc", "", ""},
+	}
+	for _, c := range cases {
+		req := httptest.NewRequest(c.method, c.path, strings.NewReader(c.body))
+		if c.key != "" {
+			req.Header.Set("X-API-Key", c.key)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Header().Get("X-Request-ID") == "" {
+			t.Errorf("%s: missing X-Request-ID", c.name)
+		}
+	}
+}
+
+func TestRequestIDIsEchoedOnProtectedRoute(t *testing.T) {
+	st, h := newAPI(t)
+	st.urls["abc"] = "https://example.com"
+
+	req := httptest.NewRequest(http.MethodGet, "/stats/abc", nil)
+	req.Header.Set("X-API-Key", testKey)
+	req.Header.Set("X-Request-ID", "trace-42")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("X-Request-ID"); got != "trace-42" {
+		t.Fatalf("X-Request-ID = %q, want the supplied id", got)
+	}
+}
+
+func TestRecovererIsolatesPanicAndKeepsRequestID(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic("secret panic value")
+	})
+	h := RequestID(Recoverer(inner))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "internal server error") {
+		t.Fatalf("body = %q", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "secret panic value") {
+		t.Fatalf("panic value leaked to the client: %q", rec.Body.String())
+	}
+	if rec.Header().Get("X-Request-ID") == "" {
+		t.Fatal("request id was lost while recovering from the panic")
+	}
+}
+
+func TestStatsAPIKeyVariants(t *testing.T) {
+	st, h := newAPI(t)
+	st.urls["abc"] = "https://example.com"
+
+	bad := []string{"", "wrong", testKey + "-extra", strings.ToUpper(testKey), " " + testKey}
+	for _, key := range bad {
+		req := httptest.NewRequest(http.MethodGet, "/stats/abc", nil)
+		if key != "" {
+			req.Header.Set("X-API-Key", key)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("key %q: status = %d, want 401", key, rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), testKey) {
+			t.Errorf("key %q: 401 body leaked the configured key: %q", key, rec.Body.String())
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/stats/abc", nil)
+	req.Header.Set("X-API-Key", testKey)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("valid key: status = %d (body %s)", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Code   string §json:"code"§
+		URL    string §json:"url"§
+		Clicks int    §json:"clicks"§
+		APIKey string §json:"api_key"§
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Code != "abc" || got.URL != "https://example.com" || got.Clicks != 0 || got.APIKey != testKey {
+		t.Fatalf("stats = %+v", got)
+	}
+}
+
+func TestStatsUnknownCodeWithValidKey(t *testing.T) {
+	_, h := newAPI(t)
+	req := httptest.NewRequest(http.MethodGet, "/stats/missing", nil)
+	req.Header.Set("X-API-Key", testKey)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 after auth passes", rec.Code)
+	}
+}
+
+func TestAuthAppliesOnlyToStats(t *testing.T) {
+	st, h := newAPI(t)
+	st.urls["abc"] = "https://example.com"
+
+	req := httptest.NewRequest(http.MethodPost, "/shorten", strings.NewReader(§{"url":"https://go.dev"}§))
+	req.Header.Set("X-API-Key", "wrong")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("shorten with a bad key: status = %d, want 201", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/abc", nil)
+	req.Header.Set("X-API-Key", "wrong")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("redirect with a bad key: status = %d, want 302", rec.Code)
+	}
+	if st.clicks["abc"] != 1 {
+		t.Fatalf("redirect clicks = %d, want 1", st.clicks["abc"])
+	}
+}
+
+func TestStatsDoesNotRecordClicks(t *testing.T) {
+	st, h := newAPI(t)
+	st.urls["abc"] = "https://example.com"
+
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/stats/abc", nil)
+		req.Header.Set("X-API-Key", testKey)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("stats %d: status = %d (body %s)", i, rec.Code, rec.Body.String())
+		}
+	}
+	if st.clicks["abc"] != 0 {
+		t.Fatalf("stats recorded clicks: %d", st.clicks["abc"])
+	}
+}
+
+func TestConcurrentStatsRequests(t *testing.T) {
+	st, h := newAPI(t)
+	st.urls["abc"] = "https://example.com"
+
+	const n = 20
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodGet, "/stats/abc", nil)
+			authorized := i%2 == 0
+			if authorized {
+				req.Header.Set("X-API-Key", testKey)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if authorized && rec.Code != http.StatusOK {
+				t.Errorf("authorized request %d: status = %d", i, rec.Code)
+			}
+			if !authorized && rec.Code != http.StatusUnauthorized {
+				t.Errorf("unauthorized request %d: status = %d", i, rec.Code)
+			}
+			if rec.Header().Get("X-Request-ID") == "" {
+				t.Errorf("request %d: missing X-Request-ID", i)
+			}
+		}(i)
+	}
+	wg.Wait()
 }
 `,
 				}},
@@ -2296,6 +2884,276 @@ func TestConcurrentRecord(t *testing.T) {
 
 var _ Store = (*SQLStore)(nil)
 var _ = sql.ErrNoRows
+
+func openStoreAt(t *testing.T, path string) (*SQLStore, *sql.DB) {
+	t.Helper()
+	db, err := Open("file:" + path)
+	if err != nil {
+		t.Fatalf("Open(%q): %v", path, err)
+	}
+	return NewSQLStore(db), db
+}
+
+func TestStatsOnEmptyStore(t *testing.T) {
+	st := newStore(t)
+	links, clicks, err := st.Stats(context.Background())
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if links != 0 || clicks != 0 {
+		t.Fatalf("Stats = %d links, %d clicks; want 0, 0", links, clicks)
+	}
+}
+
+func TestCreateRejectsBlankVariants(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	for _, bad := range []string{"", " ", "\t\n", "\u00a0"} {
+		if _, err := st.Create(ctx, bad); !errors.Is(err, ErrEmptyURL) {
+			t.Fatalf("Create(%q) = %v, want ErrEmptyURL", bad, err)
+		}
+	}
+	links, clicks, err := st.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if links != 0 || clicks != 0 {
+		t.Fatalf("rejected creates wrote rows: %d links, %d clicks", links, clicks)
+	}
+}
+
+func TestRoundTripSpecialURLs(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	urls := []string{
+		"https://go.dev/doc/?q=1#top",
+		"https://example.com/a%20b?x=1&y=2",
+		"https://例え.jp/パス",
+		"https://example.com/" + strings.Repeat("long", 100),
+	}
+
+	seen := map[string]bool{}
+	for _, u := range urls {
+		code, err := st.Create(ctx, u)
+		if err != nil {
+			t.Fatalf("Create(%q): %v", u, err)
+		}
+		if code == "" || strings.ContainsAny(code, "/?# ") {
+			t.Fatalf("bad code %q for %q", code, u)
+		}
+		if seen[code] {
+			t.Fatalf("duplicate code %q", code)
+		}
+		seen[code] = true
+		got, err := st.Resolve(ctx, code)
+		if err != nil || got != u {
+			t.Fatalf("Resolve(%q) = %q, %v; want %q", code, got, err, u)
+		}
+	}
+}
+
+func TestCreateSameURLGetsDistinctCodes(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	const u = "https://example.com/dup"
+
+	seen := map[string]bool{}
+	for i := 0; i < 5; i++ {
+		code, err := st.Create(ctx, u)
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if seen[code] {
+			t.Fatalf("duplicate code %q", code)
+		}
+		seen[code] = true
+		got, err := st.Resolve(ctx, code)
+		if err != nil || got != u {
+			t.Fatalf("Resolve(%q) = %q, %v", code, got, err)
+		}
+	}
+	links, clicks, err := st.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if links != 5 || clicks != 0 {
+		t.Fatalf("Stats = %d links, %d clicks; want 5, 0", links, clicks)
+	}
+}
+
+func TestClicksArePerCode(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	a, err := st.Create(ctx, "https://a.dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := st.Create(ctx, "https://b.dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 2; i++ {
+		if err := st.Record(ctx, a); err != nil {
+			t.Fatalf("Record(a): %v", err)
+		}
+	}
+	if err := st.Record(ctx, b); err != nil {
+		t.Fatalf("Record(b): %v", err)
+	}
+
+	if n, err := st.Clicks(ctx, a); err != nil || n != 2 {
+		t.Fatalf("Clicks(a) = %d, %v; want 2", n, err)
+	}
+	if n, err := st.Clicks(ctx, b); err != nil || n != 1 {
+		t.Fatalf("Clicks(b) = %d, %v; want 1", n, err)
+	}
+	links, clicks, err := st.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if links != 2 || clicks != 3 {
+		t.Fatalf("Stats = %d links, %d clicks; want 2, 3", links, clicks)
+	}
+}
+
+func TestRecordUnknownLeavesStoreUntouched(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	if err := st.Record(ctx, "ghost"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Record(ghost) = %v, want ErrNotFound", err)
+	}
+	if _, err := st.Resolve(ctx, "ghost"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Resolve(ghost) = %v, want ErrNotFound", err)
+	}
+	links, clicks, err := st.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if links != 0 || clicks != 0 {
+		t.Fatalf("failed Record created state: %d links, %d clicks", links, clicks)
+	}
+}
+
+func TestCreateDoesNotOverwriteExistingCode(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	if _, err := st.db.ExecContext(ctx, "INSERT INTO links (code, url) VALUES (?, ?)", "fixed", "https://original.example"); err != nil {
+		t.Fatalf("seed row: %v", err)
+	}
+
+	code, err := st.Create(ctx, "https://new.example")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if code == "fixed" {
+		t.Fatal("Create reused an existing code")
+	}
+	got, err := st.Resolve(ctx, "fixed")
+	if err != nil || got != "https://original.example" {
+		t.Fatalf("existing row was overwritten: %q, %v", got, err)
+	}
+	links, _, err := st.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if links != 2 {
+		t.Fatalf("links = %d, want 2", links)
+	}
+}
+
+func TestPersistenceAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "persist.db")
+	ctx := context.Background()
+
+	st, db := openStoreAt(t, path)
+	code, err := st.Create(ctx, "https://persist.dev")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := st.Record(ctx, code); err != nil {
+			t.Fatalf("Record: %v", err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	st2, db2 := openStoreAt(t, path)
+	defer db2.Close()
+
+	got, err := st2.Resolve(ctx, code)
+	if err != nil || got != "https://persist.dev" {
+		t.Fatalf("Resolve after reopen = %q, %v", got, err)
+	}
+	n, err := st2.Clicks(ctx, code)
+	if err != nil || n != 3 {
+		t.Fatalf("Clicks after reopen = %d, %v; want 3", n, err)
+	}
+	links, clicks, err := st2.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if links != 1 || clicks != 3 {
+		t.Fatalf("Stats after reopen = %d links, %d clicks; want 1, 3", links, clicks)
+	}
+}
+
+func TestConcurrentCreateUnique(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	const goroutines = 10
+	const each = 5
+
+	codes := make(chan string, goroutines*each)
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < each; i++ {
+				code, err := st.Create(ctx, "https://example.com")
+				if err != nil {
+					t.Errorf("Create: %v", err)
+					return
+				}
+				codes <- code
+			}
+		}()
+	}
+	wg.Wait()
+	close(codes)
+
+	seen := map[string]bool{}
+	for code := range codes {
+		if seen[code] {
+			t.Errorf("duplicate code %q", code)
+		}
+		seen[code] = true
+	}
+	if len(seen) != goroutines*each {
+		t.Fatalf("got %d distinct codes, want %d", len(seen), goroutines*each)
+	}
+	links, _, err := st.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if links != goroutines*each {
+		t.Fatalf("links = %d, want %d", links, goroutines*each)
+	}
+}
+
+func TestOpenFailsForMissingParentDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing-dir", "links.db")
+	db, err := Open("file:" + path)
+	if err == nil {
+		if db != nil {
+			db.Close()
+		}
+		t.Fatal("Open succeeded for a database whose parent directory does not exist")
+	}
+}
 `,
 				}},
 				Hints: []string{
@@ -2889,6 +3747,287 @@ func TestWorkerCountFloor(t *testing.T) {
 	}
 	if rec.calls.Load() != 10 {
 		t.Fatalf("Recorder saw %d events, want 10", rec.calls.Load())
+	}
+}
+
+type gateRecorder struct {
+	calls   atomic.Int64
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newGateRecorder() *gateRecorder {
+	return &gateRecorder{started: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (g *gateRecorder) Record(ctx context.Context, code string) error {
+	g.calls.Add(1)
+	g.once.Do(func() { close(g.started) })
+	<-g.release
+	return nil
+}
+
+func TestPendingReportsQueuedEvents(t *testing.T) {
+	rec := newGateRecorder()
+	a := NewAnalytics(rec, 1, 10)
+
+	if !a.Record(ClickEvent{Code: "p", At: time.Now()}) {
+		t.Fatal("first event was dropped")
+	}
+	select {
+	case <-rec.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker never started")
+	}
+
+	for i := 0; i < 3; i++ {
+		if !a.Record(ClickEvent{Code: "p", At: time.Now()}) {
+			t.Fatalf("event %d was dropped with an ample buffer", i)
+		}
+	}
+	if got := a.Pending(); got != 3 {
+		t.Fatalf("Pending = %d, want 3 while the worker is blocked", got)
+	}
+
+	close(rec.release)
+	a.Stop()
+
+	if got := a.Pending(); got != 0 {
+		t.Fatalf("Pending = %d after Stop, want 0", got)
+	}
+	if got := a.Total("p"); got != 4 {
+		t.Fatalf("Total = %d, want 4", got)
+	}
+	if got := rec.calls.Load(); got != 4 {
+		t.Fatalf("Recorder saw %d events, want 4", got)
+	}
+}
+
+func TestZeroBufferDropsWhileWorkerBusy(t *testing.T) {
+	rec := newGateRecorder()
+	a := NewAnalytics(rec, 1, 0)
+
+	deadline := time.Now().Add(2 * time.Second)
+	accepted := false
+	for time.Now().Before(deadline) {
+		if a.Record(ClickEvent{Code: "z", At: time.Now()}) {
+			accepted = true
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !accepted {
+		t.Fatal("could not hand an event to the single worker")
+	}
+	select {
+	case <-rec.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker never started")
+	}
+
+	before := a.Dropped()
+	for i := 0; i < 5; i++ {
+		if a.Record(ClickEvent{Code: "z", At: time.Now()}) {
+			t.Fatalf("event %d was accepted into a full unbuffered queue", i)
+		}
+	}
+	if got := a.Dropped() - before; got != 5 {
+		t.Fatalf("dropped %d events, want 5", got)
+	}
+
+	close(rec.release)
+	a.Stop()
+	if got := a.Total("z"); got != 1 {
+		t.Fatalf("Total = %d, want 1", got)
+	}
+	if got := rec.calls.Load(); got != 1 {
+		t.Fatalf("Recorder saw %d events, want 1", got)
+	}
+	if got := a.Pending(); got != 0 {
+		t.Fatalf("Pending = %d after Stop, want 0", got)
+	}
+}
+
+func TestNegativeBufferFloor(t *testing.T) {
+	rec := &countingRecorder{}
+	a := NewAnalytics(rec, 2, -7)
+
+	const n = 100
+	accepted := 0
+	for i := 0; i < n; i++ {
+		if a.Record(ClickEvent{Code: "nb", At: time.Now()}) {
+			accepted++
+		}
+	}
+	a.Stop()
+
+	if got := a.Total("nb"); got != accepted {
+		t.Fatalf("Total = %d, want %d", got, accepted)
+	}
+	if got := rec.calls.Load(); got != int64(accepted) {
+		t.Fatalf("Recorder saw %d events, want %d", got, accepted)
+	}
+	if got := a.Dropped(); got != int64(n-accepted) {
+		t.Fatalf("Dropped = %d, want %d", got, n-accepted)
+	}
+}
+
+func TestWorkerFloorForNonPositiveValues(t *testing.T) {
+	for _, workers := range []int{0, -1, -10} {
+		rec := &countingRecorder{}
+		a := NewAnalytics(rec, workers, 64)
+		for i := 0; i < 20; i++ {
+			if !a.Record(ClickEvent{Code: "wf", At: time.Now()}) {
+				t.Fatalf("workers=%d: event %d was dropped with an ample buffer", workers, i)
+			}
+		}
+		a.Stop()
+
+		if got := a.Total("wf"); got != 20 {
+			t.Fatalf("workers=%d: Total = %d, want 20", workers, got)
+		}
+		if got := rec.calls.Load(); got != 20 {
+			t.Fatalf("workers=%d: Recorder saw %d events, want 20", workers, got)
+		}
+	}
+}
+
+func TestTotalsArePerCode(t *testing.T) {
+	rec := &countingRecorder{}
+	a := NewAnalytics(rec, 4, 128)
+
+	codes := []string{"a", "b", "c"}
+	counts := []int{5, 3, 7}
+	total := 0
+	for i, code := range codes {
+		for j := 0; j < counts[i]; j++ {
+			if !a.Record(ClickEvent{Code: code, At: time.Now()}) {
+				t.Fatalf("event %d for %q was dropped", j, code)
+			}
+			total++
+		}
+	}
+	a.Stop()
+
+	for i, code := range codes {
+		if got := a.Total(code); got != counts[i] {
+			t.Fatalf("Total(%q) = %d, want %d", code, got, counts[i])
+		}
+	}
+	if got := a.Total("missing"); got != 0 {
+		t.Fatalf("Total(missing) = %d, want 0", got)
+	}
+	if got := rec.calls.Load(); got != int64(total) {
+		t.Fatalf("Recorder saw %d events, want %d", got, total)
+	}
+}
+
+func TestConcurrentPerCodeTotals(t *testing.T) {
+	rec := &countingRecorder{}
+	a := NewAnalytics(rec, 8, 4096)
+
+	const goroutines = 10
+	const each = 50
+
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			code := string(rune('a' + g))
+			for i := 0; i < each; i++ {
+				if !a.Record(ClickEvent{Code: code, At: time.Now()}) {
+					t.Errorf("event %d for %q was dropped", i, code)
+					return
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+	a.Stop()
+
+	for g := 0; g < goroutines; g++ {
+		code := string(rune('a' + g))
+		if got := a.Total(code); got != each {
+			t.Errorf("Total(%q) = %d, want %d", code, got, each)
+		}
+	}
+	if got := rec.calls.Load(); got != goroutines*each {
+		t.Fatalf("Recorder saw %d events, want %d", got, goroutines*each)
+	}
+}
+
+func TestStopDrainsBufferedEvents(t *testing.T) {
+	rec := &countingRecorder{}
+	a := NewAnalytics(rec, 1, 8)
+
+	for i := 0; i < 8; i++ {
+		if !a.Record(ClickEvent{Code: "drain", At: time.Now()}) {
+			t.Fatalf("event %d was dropped", i)
+		}
+	}
+	a.Stop()
+
+	if got := a.Total("drain"); got != 8 {
+		t.Fatalf("Total = %d, want 8", got)
+	}
+	if got := rec.calls.Load(); got != 8 {
+		t.Fatalf("Recorder saw %d events, want 8", got)
+	}
+	if got := a.Dropped(); got != 0 {
+		t.Fatalf("Dropped = %d, want 0", got)
+	}
+	if got := a.Pending(); got != 0 {
+		t.Fatalf("Pending = %d after Stop, want 0", got)
+	}
+}
+
+func TestConcurrentStopCallsAreSafe(t *testing.T) {
+	rec := &countingRecorder{}
+	a := NewAnalytics(rec, 4, 32)
+	for i := 0; i < 20; i++ {
+		if !a.Record(ClickEvent{Code: "cs", At: time.Now()}) {
+			t.Fatalf("event %d was dropped", i)
+		}
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			a.Stop()
+		}()
+	}
+	wg.Wait()
+
+	if got := a.Total("cs"); got != 20 {
+		t.Fatalf("Total = %d, want 20", got)
+	}
+	if got := rec.calls.Load(); got != 20 {
+		t.Fatalf("Recorder saw %d events, want 20", got)
+	}
+}
+
+func TestRecordAfterStopManyGoroutines(t *testing.T) {
+	a := NewAnalytics(&countingRecorder{}, 2, 8)
+	a.Stop()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if a.Record(ClickEvent{Code: "late", At: time.Now()}) {
+				t.Errorf("goroutine %d: Record accepted an event after Stop", i)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	if got := a.Total("late"); got != 0 {
+		t.Fatalf("Total = %d, want 0", got)
 	}
 }
 `,

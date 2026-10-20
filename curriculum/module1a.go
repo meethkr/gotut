@@ -271,9 +271,9 @@ Write a program whose §main§ function prints exactly this line, including the 
 Hello, Go!
 §§§
 
-Use §fmt.Println§. When you press **Run**, you will see your program's output.
-§Check§ runs a hidden test that captures what your program prints — so the text must
-match exactly, with no extra characters.
+Use §fmt.Println§. **Run program** shows the output, and **Test** runs a hidden test
+that captures what your program prints — so the text must match exactly, with no extra
+characters.
 `,
 				Starter: `package main
 
@@ -330,8 +330,14 @@ func TestMain(m *testing.M) {
 }
 
 func TestGreetingPrinted(t *testing.T) {
-	if got := strings.TrimSpace(capturedOutput); got != "Hello, Go!" {
-		t.Fatalf("your program printed %q, want %q", got, "Hello, Go!")
+	if capturedOutput != "Hello, Go!\n" {
+		t.Fatalf("your program printed %q, want exactly %q", capturedOutput, "Hello, Go!\n")
+	}
+}
+
+func TestGreetingPrintedOnce(t *testing.T) {
+	if strings.Count(capturedOutput, "Hello, Go!") != 1 {
+		t.Fatalf("your program printed %q; the greeting must appear exactly once", capturedOutput)
 	}
 }
 `,
@@ -383,7 +389,7 @@ message := fmt.Sprintf("Goodbye, %s.", who) // "Goodbye, Ada." when who is "Ada"
 §%s§ is a placeholder that a string argument fills in; the values after the format
 string fill the placeholders left to right. (Format verbs get a full topic later.)
 
-Then call it from §main§ so that pressing **Run** prints the greeting too.
+Then call it from §main§ so that **Run program** prints the greeting too.
 `,
 				Starter: `package main
 
@@ -406,16 +412,28 @@ func main() {
 import "testing"
 
 func TestGreeting(t *testing.T) {
-	cases := map[string]string{
-		"Gopher": "Hello, Gopher!",
-		"world":  "Hello, world!",
-		"":       "Hello, !",
-		"Ada":    "Hello, Ada!",
+	cases := []struct{ in, want string }{
+		{"Gopher", "Hello, Gopher!"},
+		{"world", "Hello, world!"},
+		{"", "Hello, !"},
+		{"Ada", "Hello, Ada!"},
+		{"Grace Hopper", "Hello, Grace Hopper!"},
+		{"Gopher 🐹", "Hello, Gopher 🐹!"},
+		{"100%", "Hello, 100%!"},
+		{"Ada\nLovelace", "Hello, Ada\nLovelace!"},
 	}
-	for in, want := range cases {
-		if got := Greeting(in); got != want {
-			t.Errorf("Greeting(%q) = %q, want %q", in, got, want)
+	for _, c := range cases {
+		if got := Greeting(c.in); got != c.want {
+			t.Errorf("Greeting(%q) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+func TestGreetingDoesNotMutateInput(t *testing.T) {
+	name := "Ada"
+	_ = Greeting(name)
+	if name != "Ada" {
+		t.Fatalf("Greeting changed its argument to %q", name)
 	}
 }
 `,
@@ -684,14 +702,20 @@ func main() {
 import "testing"
 
 func TestSwap(t *testing.T) {
-	a, b := Swap("left", "right")
-	if a != "right" || b != "left" {
-		t.Fatalf("Swap(\"left\", \"right\") = %q, %q; want \"right\", \"left\"", a, b)
+	cases := []struct{ a, b, wantA, wantB string }{
+		{"left", "right", "right", "left"},
+		{"", "x", "x", ""},
+		{"same", "same", "same", "same"},
+		{"", "", "", ""},
+		{"hello world", "gopher", "gopher", "hello world"},
+		{"α", "β", "β", "α"},
+		{"line\none", "line\ntwo", "line\ntwo", "line\none"},
 	}
-
-	x, y := Swap("", "x")
-	if x != "x" || y != "" {
-		t.Fatalf("Swap with an empty string = %q, %q", x, y)
+	for _, c := range cases {
+		a, b := Swap(c.a, c.b)
+		if a != c.wantA || b != c.wantB {
+			t.Errorf("Swap(%q, %q) = %q, %q; want %q, %q", c.a, c.b, a, b, c.wantA, c.wantB)
+		}
 	}
 }
 `,
@@ -744,7 +768,8 @@ func SumTwo(a, b int) int
 
 and keep §main§ reading the two numbers and printing §SumTwo(a, b)§.
 
-Use the **Input** box under the editor to type something like §7 35§ and press **Run**.
+Use the **Input** box under the editor to type something like §7 35§ and press
+**Run program**.
 `,
 				Stdin:    true,
 				SampleIn: "7 35",
@@ -777,6 +802,12 @@ func TestSumTwo(t *testing.T) {
 		{-5, 5, 0},
 		{-3, -4, -7},
 		{100, 250, 350},
+		{1, 0, 1},
+		{0, -1, -1},
+		{-1, 0, -1},
+		{999999, 1, 1000000},
+		{-500, 250, -250},
+		{42, -42, 0},
 	}
 	for _, c := range cases {
 		if got := SumTwo(c.a, c.b); got != c.want {
@@ -1146,8 +1177,9 @@ import "fmt"
 
 // ZeroValues returns the zero value of each of the four types.
 func ZeroValues() (int, string, bool, float64) {
-	// TODO: declare the variables with var and return them
-	return 0, "", false, 0
+	// TODO: declare the variables with var and return their zero values.
+	// These placeholders deliberately are not the zero values.
+	return 1, "not empty", true, 1
 }
 
 func main() {
@@ -1261,6 +1293,11 @@ func TestCelsiusToFahrenheit(t *testing.T) {
 		{-40, -40},
 		{37, 98.6},
 		{21.5, 70.7},
+		{-273.15, -459.67},
+		{1000, 1832},
+		{-100, -148},
+		{0.5, 32.9},
+		{36.6, 97.88},
 	}
 	for _, c := range cases {
 		if got := CelsiusToFahrenheit(c.in); !almost(got, c.want) {
@@ -1367,6 +1404,10 @@ func TestTotalCents(t *testing.T) {
 		{0.05, 3, 15},
 		{9.99, 0, 0},
 		{10.10, 10, 10100},
+		{0, 5, 0},
+		{0.01, 1, 1},
+		{0.10, 3, 30},
+		{19.99, 100, 199900},
 	}
 	for _, c := range cases {
 		if got := TotalCents(c.price, c.quantity); got != c.want {
@@ -1376,14 +1417,25 @@ func TestTotalCents(t *testing.T) {
 }
 
 func TestAveragePerItem(t *testing.T) {
-	if got := AveragePerItem(3998, 2); !closeEnough(got, 19.99) {
-		t.Errorf("AveragePerItem(3998, 2) = %v, want 19.99", got)
+	cases := []struct {
+		totalCents int
+		items      int
+		want       float64
+	}{
+		{3998, 2, 19.99},
+		{100, 0, 0},
+		{0, 5, 0},
+		{100, 3, 0.3333333333333333},
+		{1, 1, 0.01},
+		{999, 10, 0.999},
+		{1000, 4, 2.5},
+		{-100, 2, -0.5},
+		{0, 0, 0},
 	}
-	if got := AveragePerItem(100, 0); got != 0 {
-		t.Errorf("AveragePerItem(100, 0) = %v, want 0 (guard the division)", got)
-	}
-	if got := AveragePerItem(0, 5); got != 0 {
-		t.Errorf("AveragePerItem(0, 5) = %v, want 0", got)
+	for _, c := range cases {
+		if got := AveragePerItem(c.totalCents, c.items); !closeEnough(got, c.want) {
+			t.Errorf("AveragePerItem(%d, %d) = %v, want %v", c.totalCents, c.items, got, c.want)
+		}
 	}
 }
 `,
@@ -1677,6 +1729,10 @@ func TestReceiptLine(t *testing.T) {
 		{"Tea", 1, 3, "1 x Tea = $3.00"},
 		{"Muffin", 0, 4.25, "0 x Muffin = $0.00"},
 		{"Bagel", 10, 1.05, "10 x Bagel = $10.50"},
+		{"Café", 2, 3.5, "2 x Café = $7.00"},
+		{"", 1, 2, "1 x  = $2.00"},
+		{"Water", 1000, 0.01, "1000 x Water = $10.00"},
+		{"Rounding", 1, 19.999, "1 x Rounding = $20.00"},
 	}
 	for _, c := range cases {
 		if got := ReceiptLine(c.item, c.qty, c.price); got != c.want {
@@ -1766,6 +1822,11 @@ func TestSummarize(t *testing.T) {
 		{"Ada", 36, "Ada is 36, and will be 37 next year."},
 		{"Bo", 0, "Bo is 0, and will be 1 next year."},
 		{"Cy", 99, "Cy is 99, and will be 100 next year."},
+		{"Grace Hopper", 85, "Grace Hopper is 85, and will be 86 next year."},
+		{"Gopher 🐹", 5, "Gopher 🐹 is 5, and will be 6 next year."},
+		{"", 1, " is 1, and will be 2 next year."},
+		{"Dee", -1, "Dee is -1, and will be 0 next year."},
+		{"Eve", 1000, "Eve is 1000, and will be 1001 next year."},
 	}
 	for _, c := range cases {
 		if got := Summarize(c.name, c.age); got != c.want {
@@ -1970,7 +2031,7 @@ func WeekdayName(d Weekday) string {
 
 ### The two details that trip people up
 
-1. **A blank line still counts.** §_§ skips a value, but §iota§ still advances:
+1. **An underscore line still counts.** §_§ skips the name, but §iota§ still advances:
 
    §§§go
    const (
@@ -2137,7 +2198,7 @@ func main() {
 	High
 )`,
 				Options: []Option{
-					{Text: "§30§", Correct: true, Rationale: "§iota§ counts 0, 1, 2, 3 — the blank line still consumes a value — so §High§ is §3 * 10§."},
+					{Text: "§30§", Correct: true, Rationale: "§iota§ counts 0, 1, 2, 3 — the §_§ line still consumes a value — so §High§ is §3 * 10§."},
 					{Text: "§20§", Correct: false, Rationale: "That ignores the §_§ line, which still advances §iota§."},
 					{Text: "§40§", Correct: false, Rationale: "§iota§ starts at 0, so the four lines are 0, 1, 2, 3."},
 					{Text: "It does not compile.", Correct: false, Rationale: "§_§ skips a value and is perfectly legal in a §const§ block."},
@@ -2190,8 +2251,9 @@ import "testing"
 
 func TestGrade(t *testing.T) {
 	cases := map[int]string{
-		100: "A", 90: "A", 89: "B", 80: "B", 79: "C",
-		70: "C", 69: "D", 60: "D", 59: "F", 0: "F", -10: "F",
+		100: "A", 101: "A", 91: "A", 90: "A", 89: "B", 81: "B", 80: "B",
+		79: "C", 71: "C", 70: "C", 69: "D", 61: "D", 60: "D",
+		59: "F", 50: "F", 0: "F", -1: "F", -10: "F",
 	}
 	for score, want := range cases {
 		if got := Grade(score); got != want {
@@ -2286,6 +2348,7 @@ func TestDayType(t *testing.T) {
 		"mon": "weekday", "tue": "weekday", "wed": "weekday",
 		"thu": "weekday", "fri": "weekday",
 		"": "unknown", "friday": "unknown", "SAT": "unknown", "xyz": "unknown",
+		" sat": "unknown", "sat ": "unknown", "Mon": "unknown", "mo": "unknown",
 	}
 	for day, want := range cases {
 		if got := DayType(day); got != want {
@@ -2373,6 +2436,14 @@ func TestMax3(t *testing.T) {
 		{5, 5, 5, 5},
 		{-1, -7, -3, -1},
 		{0, 0, -1, 0},
+		{0, 0, 0, 0},
+		{-1, -2, -3, -1},
+		{-3, -2, -1, -1},
+		{9, 9, 1, 9},
+		{9, 1, 9, 9},
+		{1, 9, 9, 9},
+		{100, -100, 50, 100},
+		{-100, 100, 50, 100},
 	}
 	for name, fn := range fns {
 		for _, c := range cases {
@@ -2482,10 +2553,13 @@ func TestStatusName(t *testing.T) {
 		Paid:         "paid",
 		Shipped:      "shipped",
 		Cancelled:    "cancelled",
-		Status(-1):   "unknown",
-		Status(4):    "unknown",
-		Status(99):   "unknown",
-		Status(1000): "unknown",
+		Status(-1):     "unknown",
+		Status(-100):   "unknown",
+		Status(4):      "unknown",
+		Status(5):      "unknown",
+		Status(99):     "unknown",
+		Status(1000):   "unknown",
+		Status(999999): "unknown",
 	}
 	for in, want := range cases {
 		if got := StatusName(in); got != want {

@@ -354,6 +354,7 @@ func main() {
 					Content: `package main
 
 import (
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -406,6 +407,92 @@ func TestRunAllWaits(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("RunAll ran the jobs one at a time instead of concurrently")
+	}
+}
+
+func TestRunAllExactlyOnce(t *testing.T) {
+	for _, n := range []int{1, 2, 7, 100} {
+		calls := make([]atomic.Int64, n)
+		jobs := make([]func(), n)
+		for i := range jobs {
+			i := i
+			jobs[i] = func() { calls[i].Add(1) }
+		}
+
+		if got := RunAll(jobs); got != n {
+			t.Fatalf("n=%d: RunAll = %d, want %d", n, got, n)
+		}
+		for i := range calls {
+			if c := calls[i].Load(); c != 1 {
+				t.Fatalf("n=%d: job %d ran %d times, want exactly 1", n, i, c)
+			}
+		}
+	}
+}
+
+func TestRunAllManyJobs(t *testing.T) {
+	const n = 500
+	var mu sync.Mutex
+	seen := make(map[int]bool, n)
+
+	jobs := make([]func(), n)
+	for i := 0; i < n; i++ {
+		i := i
+		jobs[i] = func() {
+			runtime.Gosched() // encourage interleaving between the goroutines
+			mu.Lock()
+			seen[i] = true
+			mu.Unlock()
+		}
+	}
+
+	if got := RunAll(jobs); got != n {
+		t.Fatalf("RunAll = %d, want %d", got, n)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != n {
+		t.Fatalf("%d distinct jobs ran, want %d", len(seen), n)
+	}
+	for i := 0; i < n; i++ {
+		if !seen[i] {
+			t.Fatalf("job %d never ran", i)
+		}
+	}
+}
+
+func TestRunAllGuardedCounter(t *testing.T) {
+	// The shape described in the prompt: jobs share a counter guarded by a
+	// mutex the caller provides. RunAll must not return before every Add ran.
+	const n = 64
+	var mu sync.Mutex
+	count := 0
+
+	jobs := make([]func(), n)
+	for i := range jobs {
+		jobs[i] = func() {
+			mu.Lock()
+			count++
+			mu.Unlock()
+		}
+	}
+
+	if got := RunAll(jobs); got != n {
+		t.Fatalf("RunAll = %d, want %d", got, n)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if count != n {
+		t.Fatalf("%d jobs ran, want %d — RunAll returned too early", count, n)
+	}
+}
+
+func TestRunAllLenZeroNonNil(t *testing.T) {
+	// A non-nil slice with length zero must behave like nil: no jobs, no block.
+	jobs := make([]func(), 0, 10)
+	if got := RunAll(jobs); got != 0 {
+		t.Fatalf("RunAll(len-0, cap-10) = %d, want 0", got)
 	}
 }
 `,
@@ -509,6 +596,7 @@ func main() {
 
 import (
 	"math/rand"
+	"sync"
 	"testing"
 )
 
@@ -539,6 +627,91 @@ func TestSumConcurrentEdges(t *testing.T) {
 	if got := SumConcurrent([]int{1, 2, 3}, 2); got != 6 {
 		t.Fatalf("SumConcurrent = %d, want 6", got)
 	}
+}
+
+func TestSumConcurrentMixedSigns(t *testing.T) {
+	nums := []int{-5, -10, 3, -2, 0, 7, -1, 4, -100, 42, 0, 9}
+	want := 0
+	for _, v := range nums {
+		want += v
+	}
+	for _, workers := range []int{-2, 0, 1, 2, 3, 8, 100} {
+		if got := SumConcurrent(nums, workers); got != want {
+			t.Fatalf("workers=%d: got %d, want %d", workers, got, want)
+		}
+	}
+}
+
+func TestSumConcurrentWorkersClamped(t *testing.T) {
+	for _, n := range []int{1, 2, 3, 5, 17} {
+		nums := make([]int, n)
+		want := 0
+		for i := range nums {
+			nums[i] = i + 1
+			want += nums[i]
+		}
+		for _, workers := range []int{1, 3, 50} {
+			if got := SumConcurrent(nums, workers); got != want {
+				t.Fatalf("len=%d workers=%d: got %d, want %d", n, workers, got, want)
+			}
+		}
+	}
+}
+
+func TestSumConcurrentAllZeroes(t *testing.T) {
+	nums := make([]int, 1234)
+	for _, workers := range []int{1, 7, 1234, 5000} {
+		if got := SumConcurrent(nums, workers); got != 0 {
+			t.Fatalf("workers=%d: got %d, want 0", workers, got)
+		}
+	}
+}
+
+func TestSumConcurrentEmptyWithAnyWorkerCount(t *testing.T) {
+	for _, workers := range []int{-10, -1, 0, 1, 64} {
+		if got := SumConcurrent(nil, workers); got != 0 {
+			t.Fatalf("SumConcurrent(nil, %d) = %d, want 0", workers, got)
+		}
+		if got := SumConcurrent([]int{}, workers); got != 0 {
+			t.Fatalf("SumConcurrent(empty, %d) = %d, want 0", workers, got)
+		}
+	}
+}
+
+func TestSumConcurrentDoesNotMutateInput(t *testing.T) {
+	nums := []int{4, -3, 9, 0, -8, 2}
+	original := append([]int(nil), nums...)
+	if got := SumConcurrent(nums, 4); got != 4 {
+		t.Fatalf("SumConcurrent = %d, want 4", got)
+	}
+	for i := range nums {
+		if nums[i] != original[i] {
+			t.Fatalf("input was modified at %d: got %d, want %d", i, nums[i], original[i])
+		}
+	}
+}
+
+func TestSumConcurrentParallelCalls(t *testing.T) {
+	// Each call must keep its own total: a package-level or otherwise shared
+	// accumulator would show up as cross-talk here.
+	var wg sync.WaitGroup
+	for g := 0; g < 16; g++ {
+		g := g
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			nums := make([]int, 200)
+			want := 0
+			for i := range nums {
+				nums[i] = g*3 - i
+				want += nums[i]
+			}
+			if got := SumConcurrent(nums, 4); got != want {
+				t.Errorf("goroutine %d: got %d, want %d", g, got, want)
+			}
+		}()
+	}
+	wg.Wait()
 }
 `,
 				}},
@@ -1025,6 +1198,82 @@ func TestSumAllOnClosedChannel(t *testing.T) {
 		t.Fatalf("SumAll(closed) = %d, want 0", got)
 	}
 }
+
+func TestCountToOne(t *testing.T) {
+	ch := CountTo(1)
+	if v, ok := <-ch; !ok || v != 1 {
+		t.Fatalf("CountTo(1) first = %d, %v; want 1, true", v, ok)
+	}
+	if v, ok := <-ch; ok {
+		t.Fatalf("CountTo(1) yielded an extra value %d after closing", v)
+	}
+}
+
+func TestCountToLargeKeepsOrder(t *testing.T) {
+	const n = 1000
+	count := 0
+	for v := range CountTo(n) {
+		count++
+		if v != count {
+			t.Fatalf("value %d = %d, want %d", count-1, v, count)
+		}
+	}
+	if count != n {
+		t.Fatalf("CountTo(%d) yielded %d values", n, count)
+	}
+}
+
+func TestCountToIndependentChannels(t *testing.T) {
+	a := CountTo(3)
+	b := CountTo(4)
+
+	// Interleave reads: each channel must keep its own sequence.
+	for i := 1; i <= 3; i++ {
+		if v := <-a; v != i {
+			t.Fatalf("channel a: got %d, want %d", v, i)
+		}
+		if v := <-b; v != i {
+			t.Fatalf("channel b: got %d, want %d", v, i)
+		}
+	}
+	if v := <-b; v != 4 {
+		t.Fatalf("channel b: got %d, want 4", v)
+	}
+	if _, ok := <-a; ok {
+		t.Fatal("channel a still had values after 1..3")
+	}
+	if _, ok := <-b; ok {
+		t.Fatal("channel b still had values after 1..4")
+	}
+}
+
+func TestSumAllManualValues(t *testing.T) {
+	ch := make(chan int, 5)
+	for _, v := range []int{-4, 0, 10, -1, 5} {
+		ch <- v
+	}
+	close(ch)
+	if got := SumAll(ch); got != 10 {
+		t.Fatalf("SumAll = %d, want 10", got)
+	}
+}
+
+func TestSumAllNegativeValues(t *testing.T) {
+	ch := make(chan int, 3)
+	ch <- -3
+	ch <- -7
+	ch <- -10
+	close(ch)
+	if got := SumAll(ch); got != -20 {
+		t.Fatalf("SumAll = %d, want -20", got)
+	}
+}
+
+func TestSumAllSingleValue(t *testing.T) {
+	if got := SumAll(CountTo(1)); got != 1 {
+		t.Fatalf("SumAll(CountTo(1)) = %d, want 1", got)
+	}
+}
 `,
 				}},
 				Hints: []string{
@@ -1146,6 +1395,113 @@ func TestParallelMapEdges(t *testing.T) {
 	}
 	if got := ParallelMap([]int{1, 2}, 99, func(x int) int { return -x }); !reflect.DeepEqual(got, []int{-1, -2}) {
 		t.Fatalf("workers > len = %v, want [-1 -2]", got)
+	}
+}
+
+func TestParallelMapIdentityOrder(t *testing.T) {
+	nums := make([]int, 101)
+	for i := range nums {
+		nums[i] = i*3 - 7
+	}
+	for _, workers := range []int{1, 2, 3, 5, 100} {
+		got := ParallelMap(nums, workers, func(x int) int { return x })
+		if !reflect.DeepEqual(got, nums) {
+			t.Fatalf("workers=%d: identity map changed the order or values", workers)
+		}
+	}
+}
+
+func TestParallelMapDoesNotMutateInput(t *testing.T) {
+	nums := []int{5, 4, 3, 2, 1}
+	original := append([]int(nil), nums...)
+
+	got := ParallelMap(nums, 2, func(x int) int { return x * 2 })
+	if !reflect.DeepEqual(got, []int{10, 8, 6, 4, 2}) {
+		t.Fatalf("ParallelMap = %v, want [10 8 6 4 2]", got)
+	}
+	if !reflect.DeepEqual(nums, original) {
+		t.Fatalf("ParallelMap modified its input: %v, want %v", nums, original)
+	}
+}
+
+func TestParallelMapEveryElementOnce(t *testing.T) {
+	const n = 200
+	const workers = 7
+	nums := make([]int, n)
+	seen := make([]atomic.Int64, n)
+	for i := range nums {
+		nums[i] = i
+	}
+
+	got := ParallelMap(nums, workers, func(x int) int {
+		seen[x].Add(1)
+		return x + 1
+	})
+
+	if len(got) != n {
+		t.Fatalf("result length = %d, want %d", len(got), n)
+	}
+	for i := 0; i < n; i++ {
+		if c := seen[i].Load(); c != 1 {
+			t.Fatalf("f called %d times for %d, want exactly 1", c, i)
+		}
+		if got[i] != i+1 {
+			t.Fatalf("out[%d] = %d, want %d", i, got[i], i+1)
+		}
+	}
+}
+
+func TestParallelMapNegativeWorkers(t *testing.T) {
+	got := ParallelMap([]int{1, 2, 3}, -5, func(x int) int { return x * x })
+	if !reflect.DeepEqual(got, []int{1, 4, 9}) {
+		t.Fatalf("workers=-5 = %v, want [1 4 9]", got)
+	}
+}
+
+func TestParallelMapEmptySliceNonNil(t *testing.T) {
+	for _, in := range [][]int{nil, {}} {
+		got := ParallelMap(in, 3, func(x int) int { return x })
+		if got == nil {
+			t.Fatal("ParallelMap returned nil for an empty input, want a non-nil empty slice")
+		}
+		if len(got) != 0 {
+			t.Fatalf("ParallelMap(empty) = %v, want empty", got)
+		}
+	}
+}
+
+func TestParallelMapAtMostWorkersInFlight(t *testing.T) {
+	const workers = 3
+	const n = 24
+	nums := make([]int, n)
+	for i := range nums {
+		nums[i] = i
+	}
+
+	var inFlight, maxInFlight atomic.Int64
+	got := ParallelMap(nums, workers, func(x int) int {
+		cur := inFlight.Add(1)
+		for {
+			max := maxInFlight.Load()
+			if cur <= max || maxInFlight.CompareAndSwap(max, cur) {
+				break
+			}
+		}
+		time.Sleep(time.Millisecond) // give the other workers a chance to overlap
+		inFlight.Add(-1)
+		return x * 10
+	})
+
+	if max := maxInFlight.Load(); max > workers {
+		t.Fatalf("%d calls ran at once, want at most %d workers", max, workers)
+	}
+	if len(got) != n {
+		t.Fatalf("result length = %d, want %d", len(got), n)
+	}
+	for i, v := range got {
+		if v != i*10 {
+			t.Fatalf("out[%d] = %d, want %d", i, v, i*10)
+		}
 	}
 }
 `,
@@ -1337,6 +1693,141 @@ func TestFanInUnbuffered(t *testing.T) {
 	slices.Sort(got)
 	if !slices.Equal(got, []int{1, 2, 3, 4, 5}) {
 		t.Fatalf("FanIn on unbuffered channels yielded %v", got)
+	}
+}
+
+// collectWithin drains ch but fails the test if it never closes.
+func collectWithin(t *testing.T, ch <-chan int) []int {
+	t.Helper()
+	done := make(chan []int, 1)
+	go func() { done <- collect(ch) }()
+	select {
+	case got := <-done:
+		return got
+	case <-time.After(2 * time.Second):
+		t.Fatal("FanIn never closed its output channel")
+		return nil
+	}
+}
+
+func TestFanInPreservesOrderPerChannel(t *testing.T) {
+	a := make(chan int, 6)
+	for i := 1; i <= 6; i++ {
+		a <- i
+	}
+	close(a)
+
+	b := make(chan int, 6)
+	for i := 10; i <= 15; i++ {
+		b <- i
+	}
+	close(b)
+
+	got := collectWithin(t, FanIn(a, b))
+	if len(got) != 12 {
+		t.Fatalf("FanIn yielded %d values, want 12: %v", len(got), got)
+	}
+
+	var fromA, fromB []int
+	for _, v := range got {
+		if v < 10 {
+			fromA = append(fromA, v)
+		} else {
+			fromB = append(fromB, v)
+		}
+	}
+	if !slices.Equal(fromA, []int{1, 2, 3, 4, 5, 6}) {
+		t.Fatalf("relative order from a was not preserved: %v", fromA)
+	}
+	if !slices.Equal(fromB, []int{10, 11, 12, 13, 14, 15}) {
+		t.Fatalf("relative order from b was not preserved: %v", fromB)
+	}
+}
+
+func TestFanInDuplicatesAreKept(t *testing.T) {
+	a := make(chan int, 3)
+	a <- 7
+	a <- 7
+	a <- 7
+	close(a)
+
+	b := make(chan int, 2)
+	b <- 7
+	b <- 7
+	close(b)
+
+	got := collectWithin(t, FanIn(a, b))
+	if len(got) != 5 {
+		t.Fatalf("FanIn yielded %d values, want 5 (duplicates must not be collapsed): %v", len(got), got)
+	}
+	for _, v := range got {
+		if v != 7 {
+			t.Fatalf("FanIn yielded %d, want only 7s", v)
+		}
+	}
+}
+
+func TestFanInManyChannels(t *testing.T) {
+	const channels = 10
+	const per = 20
+
+	inputs := make([]<-chan int, channels)
+	for c := 0; c < channels; c++ {
+		ch := make(chan int, per)
+		for i := 1; i <= per; i++ {
+			ch <- c*1000 + i
+		}
+		close(ch)
+		inputs[c] = ch
+	}
+
+	got := collectWithin(t, FanIn(inputs...))
+	if len(got) != channels*per {
+		t.Fatalf("FanIn yielded %d values, want %d", len(got), channels*per)
+	}
+
+	last := make([]int, channels)
+	for _, v := range got {
+		c, i := v/1000, v%1000
+		if c < 0 || c >= channels {
+			t.Fatalf("unexpected value %d", v)
+		}
+		if i != last[c]+1 {
+			t.Fatalf("channel %d yielded %d after %d — order not preserved", c, i, last[c])
+		}
+		last[c] = i
+	}
+	for c := range last {
+		if last[c] != per {
+			t.Fatalf("channel %d yielded up to %d, want %d", c, last[c], per)
+		}
+	}
+}
+
+func TestFanInAllInputsAlreadyClosed(t *testing.T) {
+	a := make(chan int)
+	b := make(chan int, 3)
+	close(a)
+	close(b)
+
+	got := collectWithin(t, FanIn(a, b))
+	if len(got) != 0 {
+		t.Fatalf("FanIn of closed channels yielded %v, want nothing", got)
+	}
+}
+
+func TestFanInOneEmptyChannelAmongValues(t *testing.T) {
+	a := make(chan int, 2)
+	a <- 1
+	a <- 2
+	close(a)
+
+	empty := make(chan int)
+	close(empty)
+
+	got := collectWithin(t, FanIn(a, empty))
+	if !slices.Equal(got, []int{1, 2}) {
+		t.Fatalf("FanIn = %v, want [1 2]", got)
 	}
 }
 `,
@@ -1768,6 +2259,8 @@ func main() {
 					Content: `package main
 
 import (
+	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -1801,6 +2294,97 @@ func TestWithTimeoutZeroValue(t *testing.T) {
 	got, ok := WithTimeout(func() int { return 0 }, time.Second)
 	if !ok || got != 0 {
 		t.Fatalf("WithTimeout returning 0 legitimately = %d, %v; want 0, true", got, ok)
+	}
+}
+
+func TestWithTimeoutNegativeResult(t *testing.T) {
+	got, ok := WithTimeout(func() int { return -7 }, time.Hour)
+	if !ok || got != -7 {
+		t.Fatalf("WithTimeout = %d, %v; want -7, true", got, ok)
+	}
+}
+
+func TestWithTimeoutCallsFunctionOnce(t *testing.T) {
+	var calls atomic.Int64
+	started := make(chan struct{})
+	got, ok := WithTimeout(func() int {
+		calls.Add(1)
+		close(started)
+		return 5
+	}, time.Second)
+	if !ok || got != 5 {
+		t.Fatalf("WithTimeout = %d, %v; want 5, true", got, ok)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("f never ran")
+	}
+	if n := calls.Load(); n != 1 {
+		t.Fatalf("f ran %d times, want exactly 1", n)
+	}
+}
+
+func TestWithTimeoutZeroDuration(t *testing.T) {
+	// f cannot finish before d=0 fires, so the timeout must win deterministically.
+	block := make(chan struct{})
+	got, ok := WithTimeout(func() int {
+		<-block
+		return 99
+	}, 0)
+	close(block)
+
+	if ok {
+		t.Fatal("WithTimeout with d=0 reported success")
+	}
+	if got != 0 {
+		t.Fatalf("WithTimeout = %d, want 0", got)
+	}
+}
+
+func TestWithTimeoutFunctionStillFinishesAfterTimeout(t *testing.T) {
+	// The result channel must be buffered: f is expected to finish on its own
+	// after we have already returned, and must not block forever trying to send.
+	finished := make(chan struct{})
+	got, ok := WithTimeout(func() int {
+		time.Sleep(20 * time.Millisecond)
+		close(finished)
+		return 1
+	}, time.Millisecond)
+	if ok {
+		t.Fatal("WithTimeout reported success for a function that slept past the deadline")
+	}
+	if got != 0 {
+		t.Fatalf("WithTimeout = %d, want 0", got)
+	}
+	select {
+	case <-finished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the timed-out function never finished")
+	}
+}
+
+func TestWithTimeoutNoGoroutineLeak(t *testing.T) {
+	base := runtime.NumGoroutine()
+	release := make(chan struct{})
+
+	for i := 0; i < 20; i++ {
+		if _, ok := WithTimeout(func() int { <-release; return 1 }, time.Millisecond); ok {
+			t.Fatal("WithTimeout reported success for a blocking function")
+		}
+	}
+	close(release)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		runtime.GC()
+		if runtime.NumGoroutine() <= base+10 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("goroutines = %d, baseline = %d — timed-out calls leaked goroutines", runtime.NumGoroutine(), base)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 `,
@@ -1971,6 +2555,137 @@ func TestCounterConcurrentReaders(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestCounterAddNegativeAndZero(t *testing.T) {
+	c := NewCounter()
+	c.Add(10)
+	c.Add(-3)
+	c.Add(0)
+	c.Add(-7)
+	if got := c.Value(); got != 0 {
+		t.Fatalf("Value = %d, want 0", got)
+	}
+	c.Inc()
+	c.Add(-1)
+	if got := c.Value(); got != 0 {
+		t.Fatalf("Value = %d, want 0 after Inc then Add(-1)", got)
+	}
+}
+
+func TestCounterInstancesAreIndependent(t *testing.T) {
+	a := NewCounter()
+	b := NewCounter()
+
+	a.Add(5)
+	b.Inc()
+
+	if got := a.Value(); got != 5 {
+		t.Fatalf("a.Value = %d, want 5", got)
+	}
+	if got := b.Value(); got != 1 {
+		t.Fatalf("b.Value = %d, want 1", got)
+	}
+	a.Reset()
+	if got := b.Value(); got != 1 {
+		t.Fatalf("reset of a changed b: %d", got)
+	}
+}
+
+func TestCounterConcurrentAdd(t *testing.T) {
+	c := NewCounter()
+	const goroutines = 30
+	const step = 7
+
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				c.Add(step)
+			}
+		}()
+	}
+	wg.Wait()
+
+	want := goroutines * 50 * step
+	if got := c.Value(); got != want {
+		t.Fatalf("Value = %d, want %d", got, want)
+	}
+}
+
+func TestCounterMixedIncAndAdd(t *testing.T) {
+	c := NewCounter()
+	const goroutines = 40
+
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		g := g
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if g%2 == 0 {
+				c.Inc()
+			} else {
+				c.Add(2)
+			}
+		}()
+	}
+	wg.Wait()
+
+	want := goroutines/2*1 + goroutines/2*2
+	if got := c.Value(); got != want {
+		t.Fatalf("Value = %d, want %d", got, want)
+	}
+}
+
+func TestCounterConcurrentReset(t *testing.T) {
+	c := NewCounter()
+	c.Add(1000)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.Reset()
+			_ = c.Value()
+		}()
+	}
+	wg.Wait()
+
+	if got := c.Value(); got != 0 {
+		t.Fatalf("Value = %d after concurrent Resets, want 0", got)
+	}
+}
+
+func TestCounterReadersDuringWrites(t *testing.T) {
+	c := NewCounter()
+	const writers = 10
+	const each = 100
+
+	var wg sync.WaitGroup
+	for w := 0; w < writers; w++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < each; i++ {
+				c.Inc()
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for i := 0; i < each; i++ {
+				_ = c.Value()
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got, want := c.Value(), writers*each; got != want {
+		t.Fatalf("Value = %d, want %d", got, want)
+	}
+}
 `,
 				}},
 				Hints: []string{
@@ -2111,9 +2826,11 @@ func main() {
 					Content: `package main
 
 import (
+	"fmt"
 	"slices"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestCache(t *testing.T) {
@@ -2206,6 +2923,248 @@ func TestMergeOneSideEmpty(t *testing.T) {
 	slices.Sort(got)
 	if !slices.Equal(got, []int{1, 2}) {
 		t.Fatalf("Merge = %v, want [1 2]", got)
+	}
+}
+
+// collectWithin drains ch but fails the test if it never closes.
+func collectWithin(t *testing.T, ch <-chan int) []int {
+	t.Helper()
+	done := make(chan []int, 1)
+	go func() { done <- collect(ch) }()
+	select {
+	case got := <-done:
+		return got
+	case <-time.After(2 * time.Second):
+		t.Fatal("Merge never closed its output channel")
+		return nil
+	}
+}
+
+func TestCacheEmpty(t *testing.T) {
+	c := NewCache()
+	if c == nil {
+		t.Fatal("NewCache returned nil")
+	}
+	if got := c.Len(); got != 0 {
+		t.Fatalf("Len of a new cache = %d, want 0", got)
+	}
+	if _, ok := c.Get("anything"); ok {
+		t.Fatal("Get on an empty cache reported ok")
+	}
+	if c.Delete("anything") {
+		t.Fatal("Delete on an empty cache returned true")
+	}
+	if got := c.Len(); got != 0 {
+		t.Fatalf("Len = %d, want 0", got)
+	}
+}
+
+func TestCacheManyKeys(t *testing.T) {
+	c := NewCache()
+	const n = 200
+
+	for i := 0; i < n; i++ {
+		c.Set(fmt.Sprintf("k%d", i), fmt.Sprintf("v%d", i))
+	}
+	if got := c.Len(); got != n {
+		t.Fatalf("Len = %d, want %d", got, n)
+	}
+	for i := 0; i < n; i++ {
+		want := fmt.Sprintf("v%d", i)
+		if v, ok := c.Get(fmt.Sprintf("k%d", i)); !ok || v != want {
+			t.Fatalf("Get(k%d) = %q, %v; want %q, true", i, v, ok, want)
+		}
+	}
+
+	// Delete every other key; the rest must survive untouched.
+	for i := 0; i < n; i += 2 {
+		if !c.Delete(fmt.Sprintf("k%d", i)) {
+			t.Fatalf("Delete(k%d) returned false", i)
+		}
+	}
+	if got := c.Len(); got != n/2 {
+		t.Fatalf("Len = %d, want %d", got, n/2)
+	}
+	for i := 1; i < n; i += 2 {
+		if _, ok := c.Get(fmt.Sprintf("k%d", i)); !ok {
+			t.Fatalf("key k%d was lost", i)
+		}
+	}
+}
+
+func TestCacheEmptyValuesAndKeys(t *testing.T) {
+	c := NewCache()
+
+	c.Set("empty", "")
+	if v, ok := c.Get("empty"); !ok || v != "" {
+		t.Fatalf("Get(empty) = %q, %v; want \"\", true — presence must be distinct from the zero value", v, ok)
+	}
+
+	c.Set("", "blank-key")
+	if v, ok := c.Get(""); !ok || v != "blank-key" {
+		t.Fatalf("Get(\"\") = %q, %v; want \"blank-key\", true", v, ok)
+	}
+	if got := c.Len(); got != 2 {
+		t.Fatalf("Len = %d, want 2", got)
+	}
+}
+
+func TestCacheConcurrentDistinctKeys(t *testing.T) {
+	c := NewCache()
+	const goroutines = 25
+	const each = 20
+
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		g := g
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < each; j++ {
+				c.Set(fmt.Sprintf("g%d-k%d", g, j), fmt.Sprintf("v%d-%d", g, j))
+				c.Len()
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got, want := c.Len(), goroutines*each; got != want {
+		t.Fatalf("Len = %d, want %d", got, want)
+	}
+	for g := 0; g < goroutines; g++ {
+		for j := 0; j < each; j++ {
+			if v, ok := c.Get(fmt.Sprintf("g%d-k%d", g, j)); !ok || v != fmt.Sprintf("v%d-%d", g, j) {
+				t.Fatalf("lost key g%d-k%d: %q, %v", g, j, v, ok)
+			}
+		}
+	}
+}
+
+func TestCacheConcurrentDelete(t *testing.T) {
+	c := NewCache()
+	const n = 100
+	for i := 0; i < n; i++ {
+		c.Set(fmt.Sprintf("k%d", i), "v")
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if !c.Delete(fmt.Sprintf("k%d", i)) {
+				t.Errorf("Delete(k%d) returned false", i)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := c.Len(); got != 0 {
+		t.Fatalf("Len = %d after deleting every key, want 0", got)
+	}
+	if _, ok := c.Get("k0"); ok {
+		t.Fatal("deleted key is still present")
+	}
+}
+
+func TestMergeBothEmpty(t *testing.T) {
+	a := make(chan int)
+	b := make(chan int)
+	close(a)
+	close(b)
+
+	if got := collectWithin(t, Merge(a, b)); len(got) != 0 {
+		t.Fatalf("Merge of two closed channels yielded %v, want nothing", got)
+	}
+}
+
+func TestMergePreservesOrderPerSide(t *testing.T) {
+	a := make(chan int, 5)
+	for i := 1; i <= 5; i++ {
+		a <- i
+	}
+	close(a)
+
+	b := make(chan int, 5)
+	for i := 101; i <= 105; i++ {
+		b <- i
+	}
+	close(b)
+
+	got := collectWithin(t, Merge(a, b))
+	if len(got) != 10 {
+		t.Fatalf("Merge yielded %d values, want 10: %v", len(got), got)
+	}
+
+	var fromA, fromB []int
+	for _, v := range got {
+		if v < 100 {
+			fromA = append(fromA, v)
+		} else {
+			fromB = append(fromB, v)
+		}
+	}
+	if !slices.Equal(fromA, []int{1, 2, 3, 4, 5}) {
+		t.Fatalf("order from a was not preserved: %v", fromA)
+	}
+	if !slices.Equal(fromB, []int{101, 102, 103, 104, 105}) {
+		t.Fatalf("order from b was not preserved: %v", fromB)
+	}
+}
+
+func TestMergeUnbufferedProducers(t *testing.T) {
+	mk := func(vals ...int) <-chan int {
+		ch := make(chan int) // deliberately unbuffered
+		go func() {
+			defer close(ch)
+			for _, v := range vals {
+				ch <- v
+			}
+		}()
+		return ch
+	}
+
+	got := collectWithin(t, Merge(mk(1, 2, 3), mk(4, 5, 6, 7)))
+	slices.Sort(got)
+	if !slices.Equal(got, []int{1, 2, 3, 4, 5, 6, 7}) {
+		t.Fatalf("Merge = %v, want every value from both channels", got)
+	}
+}
+
+func TestMergeDuplicatesAreKept(t *testing.T) {
+	a := make(chan int, 2)
+	a <- 7
+	a <- 7
+	close(a)
+
+	b := make(chan int, 1)
+	b <- 7
+	close(b)
+
+	got := collectWithin(t, Merge(a, b))
+	if len(got) != 3 {
+		t.Fatalf("Merge yielded %d values, want 3 (duplicates must not be collapsed): %v", len(got), got)
+	}
+	for _, v := range got {
+		if v != 7 {
+			t.Fatalf("Merge yielded %d, want only 7s", v)
+		}
+	}
+}
+
+func TestMergeNilChannels(t *testing.T) {
+	a := make(chan int, 2)
+	a <- 1
+	a <- 2
+	close(a)
+
+	got := collectWithin(t, Merge(a, nil))
+	if !slices.Equal(got, []int{1, 2}) {
+		t.Fatalf("Merge(a, nil) = %v, want [1 2]", got)
+	}
+	if got := collectWithin(t, Merge(nil, nil)); len(got) != 0 {
+		t.Fatalf("Merge(nil, nil) yielded %v, want nothing", got)
 	}
 }
 `,
@@ -2603,6 +3562,7 @@ func main() {
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -2671,6 +3631,134 @@ func TestCollectTimeout(t *testing.T) {
 	_, err := Collect(ctx, slow)
 	if err != context.DeadlineExceeded {
 		t.Fatalf("Collect err = %v, want exactly context.DeadlineExceeded", err)
+	}
+}
+
+func TestCountDownOne(t *testing.T) {
+	ctx := context.Background()
+	ch := CountDown(ctx, 1)
+
+	v, ok := <-ch
+	if !ok || v != 1 {
+		t.Fatalf("CountDown(1) first = %d, %v; want 1, true", v, ok)
+	}
+	if v, ok := <-ch; ok {
+		t.Fatalf("CountDown(1) yielded an extra value %d", v)
+	}
+}
+
+func TestCountDownNegative(t *testing.T) {
+	got, err := Collect(context.Background(), CountDown(context.Background(), -5))
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("CountDown(-5) = %v, want empty", got)
+	}
+}
+
+func TestCountDownLarge(t *testing.T) {
+	const n = 500
+	ctx := context.Background()
+	got, err := Collect(ctx, CountDown(ctx, n))
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(got) != n {
+		t.Fatalf("collected %d values, want %d", len(got), n)
+	}
+	for i, v := range got {
+		if want := n - i; v != want {
+			t.Fatalf("got[%d] = %d, want %d", i, v, want)
+		}
+	}
+}
+
+func TestCountDownAlreadyCancelledStillCloses(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	ch := CountDown(ctx, 1000)
+	var got []int
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case v, ok := <-ch:
+			if !ok {
+				// Whatever was delivered must still be the leading prefix of
+				// 1000, 999, ... — never a reordered or duplicated value.
+				for i, x := range got {
+					if want := 1000 - i; x != want {
+						t.Fatalf("got[%d] = %d, want %d", i, x, want)
+					}
+				}
+				return
+			}
+			got = append(got, v)
+		case <-deadline:
+			t.Fatal("CountDown did not close after its context was cancelled")
+		}
+	}
+}
+
+func TestCollectEmptyClosedChannel(t *testing.T) {
+	ch := make(chan int)
+	close(ch)
+
+	got, err := Collect(context.Background(), ch)
+	if err != nil {
+		t.Fatalf("Collect(closed) err = %v, want nil", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("Collect(closed) = %v, want empty", got)
+	}
+}
+
+func TestCollectPreservesOrder(t *testing.T) {
+	ch := make(chan int, 5)
+	for _, v := range []int{5, 4, 3, 2, 1} {
+		ch <- v
+	}
+	close(ch)
+
+	got, err := Collect(context.Background(), ch)
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if !reflect.DeepEqual(got, []int{5, 4, 3, 2, 1}) {
+		t.Fatalf("Collect = %v, want [5 4 3 2 1]", got)
+	}
+}
+
+func TestCollectAlreadyExpiredDeadline(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	_, err := Collect(ctx, make(chan int))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Collect err = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+func TestCollectTimeoutKeepsOrderedPartialValues(t *testing.T) {
+	const n = 100_000_000
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	got, err := Collect(ctx, CountDown(context.Background(), n))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Collect err = %v, want context.DeadlineExceeded", err)
+	}
+	if len(got) >= n {
+		t.Fatalf("collecting all %d values should not fit in the deadline", n)
+	}
+	if len(got) > 0 && got[0] != n {
+		t.Fatalf("first collected value = %d, want %d", got[0], n)
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i] != got[i-1]-1 {
+			t.Fatalf("partial values are not a descending prefix at %d: %d then %d", i, got[i-1], got[i])
+		}
 	}
 }
 `,
@@ -2809,6 +3897,8 @@ func main() {
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -2867,6 +3957,120 @@ func TestNilContextDoesNotPanic(t *testing.T) {
 	if _, ok := UserFrom(nil); ok {
 		t.Error("UserFrom(nil) should report false")
 	}
+}
+
+func TestEmptyStringRequestIDIsStored(t *testing.T) {
+	ctx := WithRequestID(context.Background(), "")
+	id, ok := RequestID(ctx)
+	if !ok || id != "" {
+		t.Fatalf("RequestID = %q, %v; want \"\", true — an empty ID is still a stored value", id, ok)
+	}
+}
+
+func TestZeroUserIsStored(t *testing.T) {
+	ctx := WithUser(context.Background(), User{})
+	got, ok := UserFrom(ctx)
+	if !ok {
+		t.Fatal("UserFrom should report true for a stored zero-value User")
+	}
+	if got != (User{}) {
+		t.Fatalf("UserFrom = %+v, want the zero User", got)
+	}
+}
+
+func TestRequestIDInnerOverridesOuter(t *testing.T) {
+	parent := WithRequestID(context.Background(), "outer")
+	child := WithRequestID(parent, "inner")
+
+	if id, ok := RequestID(child); !ok || id != "inner" {
+		t.Fatalf("child RequestID = %q, %v; want \"inner\", true", id, ok)
+	}
+	if id, ok := RequestID(parent); !ok || id != "outer" {
+		t.Fatalf("parent RequestID = %q, %v; want \"outer\", true — the child must not mutate its parent", id, ok)
+	}
+}
+
+func TestUserInnerOverridesOuter(t *testing.T) {
+	parent := WithUser(context.Background(), User{ID: 1, Email: "one@example.com"})
+	child := WithUser(parent, User{ID: 2, Email: "two@example.com"})
+
+	if u, ok := UserFrom(child); !ok || u.ID != 2 || u.Email != "two@example.com" {
+		t.Fatalf("child UserFrom = %+v, %v", u, ok)
+	}
+	if u, ok := UserFrom(parent); !ok || u.ID != 1 || u.Email != "one@example.com" {
+		t.Fatalf("parent UserFrom = %+v, %v — the child must not mutate its parent", u, ok)
+	}
+}
+
+func TestValuesAreOrderIndependent(t *testing.T) {
+	// User first, then request ID.
+	ctx := WithUser(context.Background(), User{ID: 9, Email: "nine@example.com"})
+	ctx = WithRequestID(ctx, "req-9")
+
+	if id, ok := RequestID(ctx); !ok || id != "req-9" {
+		t.Fatalf("RequestID = %q, %v", id, ok)
+	}
+	if u, ok := UserFrom(ctx); !ok || u.ID != 9 {
+		t.Fatalf("UserFrom = %+v, %v", u, ok)
+	}
+}
+
+func TestOtherUnexportedKeyTypeDoesNotCollide(t *testing.T) {
+	type otherKey int
+
+	// otherKey(0) has the same numeric value as the first key in the starter,
+	// but a distinct Go type — so it must not be visible through either accessor.
+	ctx := context.WithValue(context.Background(), otherKey(0), "not ours")
+	if _, ok := RequestID(ctx); ok {
+		t.Fatal("a value stored under a different key type must not be found by RequestID")
+	}
+	if _, ok := UserFrom(ctx); ok {
+		t.Fatal("a value stored under a different key type must not be found by UserFrom")
+	}
+}
+
+func TestValuesSurviveCancellation(t *testing.T) {
+	parent := WithRequestID(context.Background(), "req-c")
+	parent = WithUser(parent, User{ID: 3})
+
+	ctx, cancel := context.WithCancel(parent)
+	cancel()
+
+	if id, ok := RequestID(ctx); !ok || id != "req-c" {
+		t.Fatalf("RequestID on a cancelled context = %q, %v", id, ok)
+	}
+	if u, ok := UserFrom(ctx); !ok || u.ID != 3 {
+		t.Fatalf("UserFrom on a cancelled context = %+v, %v", u, ok)
+	}
+}
+
+func TestConcurrentDerivedContexts(t *testing.T) {
+	base := WithRequestID(context.Background(), "base")
+
+	const goroutines = 50
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			ctx := WithRequestID(base, fmt.Sprintf("req-%d", i))
+			ctx = WithUser(ctx, User{ID: i, Email: fmt.Sprintf("u%d@example.com", i)})
+
+			if id, ok := RequestID(ctx); !ok || id != fmt.Sprintf("req-%d", i) {
+				t.Errorf("goroutine %d: RequestID = %q, %v", i, id, ok)
+			}
+			if u, ok := UserFrom(ctx); !ok || u.ID != i {
+				t.Errorf("goroutine %d: UserFrom = %+v, %v", i, u, ok)
+			}
+			// The shared parent must never change.
+			if id, ok := RequestID(base); !ok || id != "base" {
+				t.Errorf("goroutine %d: parent RequestID = %q, %v", i, id, ok)
+			}
+		}()
+	}
+	wg.Wait()
 }
 `,
 				}},

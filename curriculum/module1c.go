@@ -313,11 +313,29 @@ func TestSum(t *testing.T) {
 		{nil, 0},
 		{[]int{}, 0},
 		{[]int{100}, 100},
+		{[]int{0, 0, 0}, 0},
+		{[]int{5, 5, 5}, 15},
+		{[]int{-5, -10, 3}, -12},
+		{[]int{1, 2, 3, 4, 5}, 15},
+		{[]int{1000000, -1000000}, 0},
 	}
 	for _, c := range cases {
 		if got := Sum(c.xs); got != c.want {
 			t.Errorf("Sum(%v) = %d, want %d", c.xs, got, c.want)
 		}
+	}
+
+	// A slice with spare capacity must still only sum its length.
+	spare := make([]int, 3, 10)
+	copy(spare, []int{4, 5, 6})
+	if got := Sum(spare); got != 15 {
+		t.Errorf("Sum(slice with spare capacity) = %d, want 15", got)
+	}
+
+	// A sub-slice shares a backing array; Sum must not read past its length.
+	base := []int{1, 2, 3, 4, 5}
+	if got := Sum(base[1:4]); got != 9 {
+		t.Errorf("Sum(base[1:4]) = %d, want 9", got)
 	}
 }
 
@@ -331,6 +349,40 @@ func TestCount(t *testing.T) {
 	}
 	if got := Count(nil, 1); got != 0 {
 		t.Errorf("Count on nil = %d, want 0", got)
+	}
+
+	cases := []struct {
+		xs     []int
+		target int
+		want   int
+	}{
+		{[]int{}, 0, 0},
+		{[]int{}, 7, 0},
+		{[]int{7}, 7, 1},
+		{[]int{7}, 8, 0},
+		{[]int{0, 0, 0}, 0, 3},
+		{[]int{-1, -1, 2}, -1, 2},
+		{[]int{1, 2, 3}, 9, 0},
+		{[]int{2, 2, 2, 2}, 2, 4},
+		{[]int{1, 2, 2, 3, 2}, 2, 3},
+	}
+	for _, c := range cases {
+		if got := Count(c.xs, c.target); got != c.want {
+			t.Errorf("Count(%v, %d) = %d, want %d", c.xs, c.target, got, c.want)
+		}
+	}
+
+	// Spare capacity is not part of the slice.
+	spare := make([]int, 3, 8)
+	copy(spare, []int{3, 3, 4})
+	if got := Count(spare, 3); got != 2 {
+		t.Errorf("Count(slice with spare capacity) = %d, want 2", got)
+	}
+
+	// Shared backing array: only the window counts.
+	base := []int{2, 1, 2, 1, 2}
+	if got := Count(base[1:4], 2); got != 1 {
+		t.Errorf("Count(base[1:4], 2) = %d, want 1", got)
 	}
 }
 `,
@@ -463,6 +515,96 @@ func TestDropFirst(t *testing.T) {
 		t.Errorf("DropFirst(nil) = %v, want empty", got)
 	}
 }
+
+func sameInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestFirstLastTable(t *testing.T) {
+	cases := []struct {
+		xs          []int
+		first, last int
+		ok          bool
+	}{
+		{nil, 0, 0, false},
+		{[]int{}, 0, 0, false},
+		{[]int{4}, 4, 4, true},
+		{[]int{-3}, -3, -3, true},
+		{[]int{1, 2}, 1, 2, true},
+		{[]int{-3, -2, -1}, -3, -1, true},
+		{[]int{10, 20, 30, 40}, 10, 40, true},
+		{[]int{0, 0, 0, 0}, 0, 0, true},
+	}
+	for _, c := range cases {
+		first, last, ok := FirstLast(c.xs)
+		if ok != c.ok || first != c.first || last != c.last {
+			t.Errorf("FirstLast(%v) = %d, %d, %v; want %d, %d, %v",
+				c.xs, first, last, ok, c.first, c.last, c.ok)
+		}
+	}
+}
+
+func TestMiddleContent(t *testing.T) {
+	cases := []struct {
+		xs   []int
+		want []int
+	}{
+		{nil, []int{}},
+		{[]int{}, []int{}},
+		{[]int{1}, []int{}},
+		{[]int{1, 2}, []int{}},
+		{[]int{1, 2, 3}, []int{2}},
+		{[]int{1, 2, 3, 4}, []int{2, 3}},
+		{[]int{1, 2, 3, 4, 5, 6}, []int{2, 3, 4, 5}},
+		{[]int{-2, -1, 0, 1}, []int{-1, 0}},
+	}
+	for _, c := range cases {
+		if got := Middle(c.xs); !sameInts(got, c.want) {
+			t.Errorf("Middle(%v) = %v, want %v", c.xs, got, c.want)
+		}
+	}
+
+	// A slice with spare capacity is still just its length.
+	spare := make([]int, 0, 10)
+	spare = append(spare, 1, 2, 3, 4, 5)
+	if got := Middle(spare); !sameInts(got, []int{2, 3, 4}) {
+		t.Errorf("Middle(slice with spare capacity) = %v, want [2 3 4]", got)
+	}
+}
+
+func TestDropFirstContent(t *testing.T) {
+	cases := []struct {
+		xs   []int
+		want []int
+	}{
+		{nil, []int{}},
+		{[]int{}, []int{}},
+		{[]int{9}, []int{}},
+		{[]int{1, 2}, []int{2}},
+		{[]int{1, 2, 3, 4}, []int{2, 3, 4}},
+		{[]int{-1, 0, 1}, []int{0, 1}},
+	}
+	for _, c := range cases {
+		if got := DropFirst(c.xs); !sameInts(got, c.want) {
+			t.Errorf("DropFirst(%v) = %v, want %v", c.xs, got, c.want)
+		}
+	}
+
+	// Only the part after index 0 is returned, even with spare capacity.
+	spare := make([]int, 0, 12)
+	spare = append(spare, 7, 8, 9)
+	if got := DropFirst(spare); !sameInts(got, []int{8, 9}) {
+		t.Errorf("DropFirst(slice with spare capacity) = %v, want [8 9]", got)
+	}
+}
 `,
 				}},
 				Hints: []string{
@@ -564,7 +706,13 @@ func TestEvens(t *testing.T) {
 		{10, []int{0, 2, 4, 6, 8, 10}},
 		{0, []int{0}},
 		{-5, []int{}},
+		{-1, []int{}},
 		{1, []int{0}},
+		{2, []int{0, 2}},
+		{3, []int{0, 2}},
+		{4, []int{0, 2, 4}},
+		{5, []int{0, 2, 4}},
+		{11, []int{0, 2, 4, 6, 8, 10}},
 	}
 	for _, c := range cases {
 		got := Evens(c.limit)
@@ -605,6 +753,84 @@ func TestRepeat(t *testing.T) {
 	}
 	if got := Repeat("x", -2); len(got) != 0 {
 		t.Errorf("Repeat(\"x\", -2) = %v, want empty", got)
+	}
+}
+
+func sameInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestRunningTotalTable(t *testing.T) {
+	cases := []struct {
+		xs   []int
+		want []int
+	}{
+		{nil, []int{}},
+		{[]int{}, []int{}},
+		{[]int{5}, []int{5}},
+		{[]int{-1, 2, -3}, []int{-1, 1, -2}},
+		{[]int{0, 0, 0}, []int{0, 0, 0}},
+		{[]int{10, -10, 10}, []int{10, 0, 10}},
+		{[]int{1, 1, 1, 1}, []int{1, 2, 3, 4}},
+		{[]int{-5, -5, 5}, []int{-5, -10, -5}},
+	}
+	for _, c := range cases {
+		got := RunningTotal(c.xs)
+		if !sameInts(got, c.want) {
+			t.Errorf("RunningTotal(%v) = %v, want %v", c.xs, got, c.want)
+		}
+	}
+
+	in := []int{1, 2, 3}
+	_ = RunningTotal(in)
+	if !sameInts(in, []int{1, 2, 3}) {
+		t.Errorf("RunningTotal mutated its input: %v", in)
+	}
+
+	spare := make([]int, 0, 12)
+	spare = append(spare, 2, 4, 6)
+	if got := RunningTotal(spare); !sameInts(got, []int{2, 6, 12}) {
+		t.Errorf("RunningTotal(slice with spare capacity) = %v, want [2 6 12]", got)
+	}
+}
+
+func TestRepeatTable(t *testing.T) {
+	cases := []struct {
+		s    string
+		n    int
+		want []string
+	}{
+		{"", 3, []string{"", "", ""}},
+		{"x", 1, []string{"x"}},
+		{"ab", 2, []string{"ab", "ab"}},
+		{"é", 3, []string{"é", "é", "é"}},
+		{"word", 0, []string{}},
+		{"word", -1, []string{}},
+	}
+	for _, c := range cases {
+		if got := Repeat(c.s, c.n); !sameStrings(got, c.want) {
+			t.Errorf("Repeat(%q, %d) = %v, want %v", c.s, c.n, got, c.want)
+		}
 	}
 }
 `,
@@ -995,6 +1221,131 @@ func TestCloneTailOutOfRange(t *testing.T) {
 		t.Errorf("CloneTail(a, 0) = %v, want all three", got)
 	}
 }
+
+func sameInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestCloneTable(t *testing.T) {
+	cases := []struct {
+		name string
+		xs   []int
+	}{
+		{"nil", nil},
+		{"empty", []int{}},
+		{"one", []int{7}},
+		{"many", []int{1, 2, 3, 4, 5}},
+		{"negative", []int{-3, -2, -1, 0}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := Clone(c.xs)
+			if got == nil {
+				t.Fatalf("Clone(%v) returned nil; want an empty non-nil slice", c.xs)
+			}
+			if !sameInts(got, c.xs) {
+				t.Fatalf("Clone(%v) = %v", c.xs, got)
+			}
+			before := append([]int(nil), c.xs...)
+			if len(got) > 0 {
+				got[0] = 999
+			}
+			if !sameInts(c.xs, before) {
+				t.Fatalf("Clone shares memory with its input: got %v, input %v", got, c.xs)
+			}
+		})
+	}
+}
+
+func TestCloneWithSpareCapacityAndSubslice(t *testing.T) {
+	spare := make([]int, 3, 10)
+	copy(spare, []int{4, 5, 6})
+	got := Clone(spare)
+	got[1] = 99
+	if spare[1] != 5 {
+		t.Fatalf("Clone of a slice with spare capacity shares memory: %v", spare)
+	}
+
+	base := []int{1, 2, 3, 4, 5}
+	sub := Clone(base[1:4])
+	if !sameInts(sub, []int{2, 3, 4}) {
+		t.Fatalf("Clone(base[1:4]) = %v, want [2 3 4]", sub)
+	}
+	sub[0] = 99
+	if base[1] != 2 {
+		t.Fatalf("Clone of a sub-slice shares memory: %v", base)
+	}
+}
+
+func TestCloneInputMutationDoesNotAffectClone(t *testing.T) {
+	a := []int{1, 2, 3}
+	b := Clone(a)
+	a[0] = 99
+	if !sameInts(b, []int{1, 2, 3}) {
+		t.Fatalf("mutating the input changed the clone: %v", b)
+	}
+}
+
+func TestCloneTailTable(t *testing.T) {
+	xs := []int{1, 2, 3, 4}
+	cases := []struct {
+		from int
+		want []int
+	}{
+		{0, []int{1, 2, 3, 4}},
+		{1, []int{2, 3, 4}},
+		{2, []int{3, 4}},
+		{3, []int{4}},
+		{4, []int{}},
+		{-1, []int{}},
+		{5, []int{}},
+		{99, []int{}},
+	}
+	for _, c := range cases {
+		got := CloneTail(xs, c.from)
+		if got == nil {
+			t.Errorf("CloneTail(xs, %d) returned nil; want a non-nil slice", c.from)
+			continue
+		}
+		if !sameInts(got, c.want) {
+			t.Errorf("CloneTail(xs, %d) = %v, want %v", c.from, got, c.want)
+			continue
+		}
+		if len(got) > 0 {
+			got[0] = 999
+		}
+		if !sameInts(xs, []int{1, 2, 3, 4}) {
+			t.Fatalf("CloneTail(xs, %d) shares memory with xs: %v", c.from, xs)
+		}
+	}
+}
+
+func TestCloneTailEmptyInputs(t *testing.T) {
+	for _, in := range [][]int{nil, {}} {
+		if got := CloneTail(in, 0); got == nil || len(got) != 0 {
+			t.Errorf("CloneTail(%v, 0) = %v, want an empty non-nil slice", in, got)
+		}
+	}
+
+	spare := make([]int, 0, 10)
+	spare = append(spare, 10, 20, 30)
+	got := CloneTail(spare, 1)
+	if !sameInts(got, []int{20, 30}) {
+		t.Fatalf("CloneTail(slice with spare capacity, 1) = %v, want [20 30]", got)
+	}
+	got[0] = 999
+	if spare[1] != 20 {
+		t.Fatalf("CloneTail shares memory: %v", spare)
+	}
+}
 `,
 				}},
 				Hints: []string{
@@ -1140,6 +1491,124 @@ func TestWithout(t *testing.T) {
 	}
 	if len(Without(nil, 1)) != 0 {
 		t.Error("Without(nil) should be empty")
+	}
+}
+
+func TestFilterTable(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []int
+		keep func(int) bool
+		want []int
+	}{
+		{"all", []int{1, 2, 3}, func(int) bool { return true }, []int{1, 2, 3}},
+		{"none", []int{1, 3, 5}, func(n int) bool { return n%2 == 0 }, []int{}},
+		{"positive", []int{-2, -1, 0, 1, 2}, func(n int) bool { return n > 0 }, []int{1, 2}},
+		{"nil", nil, func(int) bool { return true }, []int{}},
+		{"empty", []int{}, func(int) bool { return true }, []int{}},
+		{"duplicates", []int{2, 2, 3, 2}, func(n int) bool { return n == 2 }, []int{2, 2, 2}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			before := append([]int(nil), c.in...)
+			got := Filter(c.in, c.keep)
+			if !equal(got, c.want) {
+				t.Fatalf("Filter(%v) = %v, want %v", c.in, got, c.want)
+			}
+			if !equal(c.in, before) {
+				t.Fatalf("Filter mutated its input: %v", c.in)
+			}
+			if len(got) > 0 {
+				got[0] = 999
+				if !equal(c.in, before) {
+					t.Fatalf("Filter returned a slice sharing memory with its input: %v", c.in)
+				}
+			}
+		})
+	}
+}
+
+func TestRemoveAtTable(t *testing.T) {
+	in := []int{10, 20, 30, 40}
+	cases := []struct {
+		i    int
+		want []int
+	}{
+		{0, []int{20, 30, 40}},
+		{1, []int{10, 30, 40}},
+		{2, []int{10, 20, 40}},
+		{3, []int{10, 20, 30}},
+		{4, []int{10, 20, 30, 40}},
+		{-1, []int{10, 20, 30, 40}},
+		{99, []int{10, 20, 30, 40}},
+	}
+	for _, c := range cases {
+		got := RemoveAt(in, c.i)
+		if !equal(got, c.want) {
+			t.Errorf("RemoveAt(_, %d) = %v, want %v", c.i, got, c.want)
+			continue
+		}
+		if !equal(in, []int{10, 20, 30, 40}) {
+			t.Fatalf("RemoveAt(_, %d) mutated its input: %v", c.i, in)
+		}
+		if len(got) > 0 {
+			got[0] = 999
+		}
+		if !equal(in, []int{10, 20, 30, 40}) {
+			t.Fatalf("RemoveAt(_, %d) returned a slice sharing memory: %v", c.i, in)
+		}
+	}
+}
+
+func TestRemoveAtSmallInputs(t *testing.T) {
+	one := []int{7}
+	if got := RemoveAt(one, 0); len(got) != 0 {
+		t.Errorf("RemoveAt([7], 0) = %v, want empty", got)
+	}
+	if !equal(one, []int{7}) {
+		t.Errorf("RemoveAt([7], 0) mutated its input: %v", one)
+	}
+	if got := RemoveAt(nil, 0); len(got) != 0 {
+		t.Errorf("RemoveAt(nil, 0) = %v, want empty", got)
+	}
+	if got := RemoveAt([]int{}, 0); len(got) != 0 {
+		t.Errorf("RemoveAt(empty, 0) = %v, want empty", got)
+	}
+}
+
+func TestWithoutTable(t *testing.T) {
+	cases := []struct {
+		name   string
+		xs     []int
+		target int
+		want   []int
+	}{
+		{"duplicates", []int{1, 2, 1, 3, 1}, 1, []int{2, 3}},
+		{"absent", []int{1, 2, 3}, 9, []int{1, 2, 3}},
+		{"all", []int{5, 5, 5}, 5, []int{}},
+		{"keep when target differs", []int{5, 5}, 9, []int{5, 5}},
+		{"nil", nil, 1, []int{}},
+		{"empty", []int{}, 1, []int{}},
+		{"negative", []int{-1, 0, -1}, -1, []int{0}},
+		{"interleaved", []int{1, 2, 1, 2}, 1, []int{2, 2}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			before := append([]int(nil), c.xs...)
+			got := Without(c.xs, c.target)
+			if !equal(got, c.want) {
+				t.Fatalf("Without(%v, %d) = %v, want %v", c.xs, c.target, got, c.want)
+			}
+			if !equal(c.xs, before) {
+				t.Fatalf("Without mutated its input: %v", c.xs)
+			}
+			if len(got) > 0 {
+				got[0] = 999
+				if !equal(c.xs, before) {
+					t.Fatalf("Without returned a slice sharing memory with its input: %v", c.xs)
+				}
+			}
+		})
 	}
 }
 `,
@@ -1307,6 +1776,132 @@ func TestMerge(t *testing.T) {
 	}
 	if len(Merge(nil, nil)) != 0 {
 		t.Error("Merge(nil, nil) should be empty")
+	}
+}
+
+func sameInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func sameChunks(a, b [][]int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !sameInts(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func TestChunkTable(t *testing.T) {
+	cases := []struct {
+		name string
+		xs   []int
+		size int
+		want [][]int
+	}{
+		{"size one", []int{1, 2, 3}, 1, [][]int{{1}, {2}, {3}}},
+		{"exact division", []int{1, 2, 3, 4}, 2, [][]int{{1, 2}, {3, 4}}},
+		{"remainder", []int{1, 2, 3, 4, 5, 6, 7}, 3, [][]int{{1, 2, 3}, {4, 5, 6}, {7}}},
+		{"size larger than input", []int{1, 2}, 10, [][]int{{1, 2}}},
+		{"single element", []int{9}, 2, [][]int{{9}}},
+		{"empty", []int{}, 2, [][]int{}},
+		{"nil", nil, 2, [][]int{}},
+		{"negative values", []int{-2, -1, 0, 1}, 2, [][]int{{-2, -1}, {0, 1}}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := Chunk(c.xs, c.size); !sameChunks(got, c.want) {
+				t.Fatalf("Chunk(%v, %d) = %v, want %v", c.xs, c.size, got, c.want)
+			}
+		})
+	}
+}
+
+func TestAllChunksAreDetached(t *testing.T) {
+	xs := make([]int, 6, 20)
+	copy(xs, []int{1, 2, 3, 4, 5, 6})
+	chunks := Chunk(xs, 2)
+	if len(chunks) != 3 {
+		t.Fatalf("Chunk returned %d groups, want 3", len(chunks))
+	}
+	for i := range chunks {
+		if len(chunks[i]) == 0 {
+			continue
+		}
+		chunks[i][0] = 999
+		if !sameInts(xs, []int{1, 2, 3, 4, 5, 6}) {
+			t.Fatalf("writing to chunk %d corrupted the source: %v", i, xs)
+		}
+	}
+
+	// The chunks must also be independent of one another.
+	fresh := Chunk(xs, 2)
+	fresh[0][0] = 999
+	if fresh[1][0] != 3 {
+		t.Fatalf("chunks share memory with one another: %v", fresh)
+	}
+}
+
+func TestMergeTable(t *testing.T) {
+	cases := []struct {
+		name string
+		a, b []int
+		want []int
+	}{
+		{"both nil", nil, nil, []int{}},
+		{"nil then values", nil, []int{1}, []int{1}},
+		{"values then nil", []int{1}, nil, []int{1}},
+		{"both empty", []int{}, []int{}, []int{}},
+		{"a empty", []int{}, []int{2, 3}, []int{2, 3}},
+		{"b empty", []int{1, 2}, []int{}, []int{1, 2}},
+		{"mixed", []int{-1, 0}, []int{1, 2}, []int{-1, 0, 1, 2}},
+		{"duplicates", []int{1, 1}, []int{1}, []int{1, 1, 1}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			beforeA := append([]int(nil), c.a...)
+			beforeB := append([]int(nil), c.b...)
+			got := Merge(c.a, c.b)
+			if !sameInts(got, c.want) {
+				t.Fatalf("Merge(%v, %v) = %v, want %v", c.a, c.b, got, c.want)
+			}
+			if !sameInts(c.a, beforeA) || !sameInts(c.b, beforeB) {
+				t.Fatalf("Merge mutated its inputs: a=%v b=%v", c.a, c.b)
+			}
+			if len(got) > 0 {
+				got[0] = 999
+				if !sameInts(c.a, beforeA) || !sameInts(c.b, beforeB) {
+					t.Fatalf("Merge shares memory with its inputs: a=%v b=%v", c.a, c.b)
+				}
+			}
+		})
+	}
+}
+
+func TestMergeWithSpareCapacity(t *testing.T) {
+	a := make([]int, 0, 10)
+	a = append(a, 1, 2, 3)
+	b := make([]int, 0, 10)
+	b = append(b, 4, 5)
+	got := Merge(a, b)
+	if !sameInts(got, []int{1, 2, 3, 4, 5}) {
+		t.Fatalf("Merge = %v, want [1 2 3 4 5]", got)
+	}
+	got[0] = 99
+	got[3] = 99
+	if !sameInts(a, []int{1, 2, 3}) || !sameInts(b, []int{4, 5}) {
+		t.Fatalf("Merge shares memory with inputs that had spare capacity: a=%v b=%v", a, b)
 	}
 }
 `,
@@ -1659,6 +2254,38 @@ func TestRuneLen(t *testing.T) {
 		}
 	}
 }
+
+func TestByteAndRuneLenTable(t *testing.T) {
+	cases := []struct {
+		in    string
+		bytes int
+		runes int
+	}{
+		{"", 0, 0},
+		{"a", 1, 1},
+		{"abc", 3, 3},
+		{"héllo", 6, 5},
+		{"日本", 6, 2},
+		{"👋", 4, 1},
+		{"a👋b", 6, 3},
+		{"aé日👋", 10, 4},
+		{"\u00e9", 2, 1},
+		{"e\u0301", 3, 2},
+		{"a\nb", 3, 3},
+		{" ", 1, 1},
+		{"  \t", 3, 3},
+		{"\U0001F1EC\U0001F1E7", 8, 2},
+		{"\xff", 1, 1},
+	}
+	for _, c := range cases {
+		if got := ByteLen(c.in); got != c.bytes {
+			t.Errorf("ByteLen(%q) = %d, want %d", c.in, got, c.bytes)
+		}
+		if got := RuneLen(c.in); got != c.runes {
+			t.Errorf("RuneLen(%q) = %d, want %d", c.in, got, c.runes)
+		}
+	}
+}
 `,
 				}},
 				Hints: []string{
@@ -1735,14 +2362,22 @@ import "testing"
 
 func TestReverse(t *testing.T) {
 	cases := map[string]string{
-		"":       "",
-		"a":      "a",
-		"ab":     "ba",
-		"hello":  "olleh",
-		"héllo":  "olléh",
-		"日本":     "本日",
-		"ab👋":    "👋ba",
-		"a b":    "b a",
+		"":         "",
+		"a":        "a",
+		"ab":       "ba",
+		"aba":      "aba",
+		"aab":      "baa",
+		"abcdef":   "fedcba",
+		"hello":    "olleh",
+		"héllo":    "olléh",
+		"日本":       "本日",
+		"ab👋":      "👋ba",
+		"a b":      "b a",
+		"12321":    "12321",
+		"  ":       "  ",
+		"aé日":      "日éa",
+		"👋👋":       "👋👋",
+		"e\u0301x": "x\u0301e",
 	}
 	for in, want := range cases {
 		if got := Reverse(in); got != want {
@@ -1752,7 +2387,17 @@ func TestReverse(t *testing.T) {
 }
 
 func TestReverseASCII(t *testing.T) {
-	for in, want := range map[string]string{"": "", "ab": "ba", "hello": "olleh"} {
+	for in, want := range map[string]string{
+		"":       "",
+		"a":      "a",
+		"ab":     "ba",
+		"abba":   "abba",
+		"abcdef": "fedcba",
+		"hello":  "olleh",
+		"12345":  "54321",
+		"a b":    "b a",
+		"  ":     "  ",
+	} {
 		if got := ReverseASCII(in); got != want {
 			t.Errorf("ReverseASCII(%q) = %q, want %q", in, got, want)
 		}
@@ -1876,12 +2521,20 @@ func sameStrings(a, b []string) bool {
 
 func TestNormalize(t *testing.T) {
 	cases := map[string]string{
-		"Hello, World!":  "hello world",
-		"  Go  ":         "go",
-		"a-b_c!":         "abc",
-		"":               "",
-		"...":            "",
-		"123 ok":         "123 ok",
+		"Hello, World!":     "hello world",
+		"  Go  ":            "go",
+		"a-b_c!":            "abc",
+		"":                  "",
+		"...":               "",
+		"!!!":               "",
+		"123 ok":            "123 ok",
+		"  Hello,   World!": "hello   world",
+		"a\tb\nc":           "abc",
+		"Über Café":         "über café",
+		"a  b":              "a  b",
+		"Hello123":          "hello123",
+		" \t\n ":            "",
+		"日本 語":             "日本 語",
 	}
 	for in, want := range cases {
 		if got := Normalize(in); got != want {
@@ -1917,6 +2570,55 @@ func TestJoinWith(t *testing.T) {
 	}
 	if got := JoinWith(nil, ", "); got != "" {
 		t.Errorf("JoinWith(nil) = %q, want empty", got)
+	}
+}
+
+func TestWordStatsTable(t *testing.T) {
+	cases := []struct {
+		text string
+		want []string
+	}{
+		{"the cat and the hat", []string{"and:1", "cat:1", "hat:1", "the:2"}},
+		{"", []string{}},
+		{"   \t\n ", []string{}},
+		{",,,", []string{}},
+		{"one", []string{"one:1"}},
+		{"go go GO", []string{"go:3"}},
+		{"b a c b a", []string{"a:2", "b:2", "c:1"}},
+		{"  spaced   out  ", []string{"out:1", "spaced:1"}},
+		{"hello, hello!", []string{"hello:2"}},
+		{"café café", []string{"café:2"}},
+		{"z z z z", []string{"z:4"}},
+		{"a1 b2 a1", []string{"a1:2", "b2:1"}},
+		{"bbb aaa", []string{"aaa:1", "bbb:1"}},
+	}
+	for _, c := range cases {
+		got := WordStats(c.text)
+		if !sameStrings(got, c.want) {
+			t.Errorf("WordStats(%q) = %v, want %v", c.text, got, c.want)
+		}
+	}
+}
+
+func TestJoinWithTable(t *testing.T) {
+	cases := []struct {
+		words []string
+		sep   string
+		want  string
+	}{
+		{nil, ", ", ""},
+		{[]string{}, ", ", ""},
+		{[]string{"only"}, ", ", "only"},
+		{[]string{"a", "b"}, "-", "a-b"},
+		{[]string{"a", "b", "c", "d"}, "-", "a-b-c-d"},
+		{[]string{"x", "y"}, "", "xy"},
+		{[]string{"solo"}, "--", "solo"},
+		{[]string{"hé", "日"}, " + ", "hé + 日"},
+	}
+	for _, c := range cases {
+		if got := JoinWith(c.words, c.sep); got != c.want {
+			t.Errorf("JoinWith(%v, %q) = %q, want %q", c.words, c.sep, got, c.want)
+		}
 	}
 }
 `,
@@ -2360,6 +3062,68 @@ func TestLookup(t *testing.T) {
 		t.Errorf("Lookup(dog) = %d, %v; want 0, false", n, ok)
 	}
 }
+
+func TestWordCountTable(t *testing.T) {
+	cases := []struct {
+		text string
+		want map[string]int
+	}{
+		{"", map[string]int{}},
+		{"   \t\n ", map[string]int{}},
+		{"one", map[string]int{"one": 1}},
+		{"a a a", map[string]int{"a": 3}},
+		{"go go GO", map[string]int{"go": 2, "GO": 1}},
+		{"  a\tb\n a  ", map[string]int{"a": 2, "b": 1}},
+		{"one two one two three", map[string]int{"one": 2, "two": 2, "three": 1}},
+		{"héllo héllo 日本", map[string]int{"héllo": 2, "日本": 1}},
+		{"same same same same", map[string]int{"same": 4}},
+	}
+	for _, c := range cases {
+		got := WordCount(c.text)
+		if got == nil {
+			t.Errorf("WordCount(%q) returned nil; want a non-nil map", c.text)
+			continue
+		}
+		if len(got) != len(c.want) {
+			t.Errorf("WordCount(%q) = %v, want %v", c.text, got, c.want)
+			continue
+		}
+		for word, want := range c.want {
+			if got[word] != want {
+				t.Errorf("WordCount(%q)[%q] = %d, want %d (full map %v)",
+					c.text, word, got[word], want, got)
+			}
+		}
+	}
+}
+
+func TestLookupTable(t *testing.T) {
+	counts := map[string]int{"zero": 0, "two": 2, "": 1}
+	cases := []struct {
+		word string
+		n    int
+		ok   bool
+	}{
+		{"zero", 0, true},
+		{"two", 2, true},
+		{"", 1, true},
+		{"missing", 0, false},
+		{"Zero", 0, false},
+	}
+	for _, c := range cases {
+		if n, ok := Lookup(counts, c.word); n != c.n || ok != c.ok {
+			t.Errorf("Lookup(%q) = %d, %v; want %d, %v", c.word, n, ok, c.n, c.ok)
+		}
+	}
+	if len(counts) != 3 {
+		t.Errorf("Lookup modified the map: %v", counts)
+	}
+
+	// Reading from a nil map is safe and always reports absent.
+	if n, ok := Lookup(nil, "anything"); ok || n != 0 {
+		t.Errorf("Lookup(nil, anything) = %d, %v; want 0, false", n, ok)
+	}
+}
 `,
 				}},
 				Hints: []string{
@@ -2509,6 +3273,111 @@ func TestSortedKeys(t *testing.T) {
 	}
 	if len(SortedKeys(nil)) != 0 {
 		t.Error("SortedKeys(nil) should be empty")
+	}
+}
+
+func TestGroupByLengthTable(t *testing.T) {
+	cases := []struct {
+		name  string
+		words []string
+		want  map[int][]string
+	}{
+		{"nil", nil, map[int][]string{}},
+		{"empty", []string{}, map[int][]string{}},
+		{"single", []string{"x"}, map[int][]string{1: []string{"x"}}},
+		{"same length", []string{"aa", "bb", "cc"}, map[int][]string{2: []string{"aa", "bb", "cc"}}},
+		{"mixed", []string{"a", "bb", "c", "dd", "eee"}, map[int][]string{
+			1: []string{"a", "c"},
+			2: []string{"bb", "dd"},
+			3: []string{"eee"},
+		}},
+		{"unicode byte lengths", []string{"é", "日", "ab"}, map[int][]string{
+			2: []string{"é", "ab"},
+			3: []string{"日"},
+		}},
+		{"duplicates", []string{"a", "a", "bb"}, map[int][]string{
+			1: []string{"a", "a"},
+			2: []string{"bb"},
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := GroupByLength(c.words)
+			if got == nil {
+				t.Fatal("GroupByLength returned nil; want a non-nil map")
+			}
+			if len(got) != len(c.want) {
+				t.Fatalf("GroupByLength(%v) = %v, want %v", c.words, got, c.want)
+			}
+			for length, want := range c.want {
+				if !slices.Equal(got[length], want) {
+					t.Errorf("group %d = %v, want %v", length, got[length], want)
+				}
+			}
+		})
+	}
+}
+
+func TestInvertTable(t *testing.T) {
+	cases := []struct {
+		name   string
+		counts map[string]int
+		want   map[int][]string
+	}{
+		{"nil", nil, map[int][]string{}},
+		{"empty", map[string]int{}, map[int][]string{}},
+		{"unique", map[string]int{"a": 1, "b": 2, "c": 3}, map[int][]string{
+			1: []string{"a"},
+			2: []string{"b"},
+			3: []string{"c"},
+		}},
+		{"shared counts", map[string]int{"a": 2, "b": 2, "c": 1}, map[int][]string{
+			1: []string{"c"},
+			2: []string{"a", "b"},
+		}},
+		{"zero count", map[string]int{"z": 0, "a": 1}, map[int][]string{
+			0: []string{"z"},
+			1: []string{"a"},
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := Invert(c.counts)
+			if got == nil {
+				t.Fatal("Invert returned nil; want a non-nil map")
+			}
+			if len(got) != len(c.want) {
+				t.Fatalf("Invert(%v) = %v, want %v", c.counts, got, c.want)
+			}
+			for _, group := range got {
+				slices.Sort(group)
+			}
+			for count, want := range c.want {
+				if !slices.Equal(got[count], want) {
+					t.Errorf("Invert group %d = %v, want %v", count, got[count], want)
+				}
+			}
+		})
+	}
+}
+
+func TestSortedKeysTable(t *testing.T) {
+	cases := []struct {
+		m    map[string]int
+		want []string
+	}{
+		{nil, []string{}},
+		{map[string]int{}, []string{}},
+		{map[string]int{"a": 1}, []string{"a"}},
+		{map[string]int{"b": 2, "a": 1, "c": 3}, []string{"a", "b", "c"}},
+		{map[string]int{"c": 1, "b": 2, "a": 3}, []string{"a", "b", "c"}},
+		{map[string]int{"10": 1, "2": 2, "1": 3}, []string{"1", "10", "2"}},
+		{map[string]int{"é": 1, "z": 2, "a": 3}, []string{"a", "z", "é"}},
+	}
+	for _, c := range cases {
+		if got := SortedKeys(c.m); !slices.Equal(got, c.want) {
+			t.Errorf("SortedKeys(%v) = %v, want %v", c.m, got, c.want)
+		}
 	}
 }
 `,
@@ -2690,6 +3559,103 @@ func TestNames(t *testing.T) {
 	}
 	if len(NewPhoneBook().Names()) != 0 {
 		t.Error("Names on an empty book should be empty")
+	}
+}
+
+func TestSetOverwritesAndKeepsOneEntry(t *testing.T) {
+	pb := NewPhoneBook()
+	pb.Set("ada", "111")
+	pb.Set("bo", "222")
+	pb.Set("ada", "333")
+	pb.Set("bo", "444")
+
+	if got := pb.Names(); !slices.Equal(got, []string{"ada", "bo"}) {
+		t.Fatalf("Names after overwrites = %v, want [ada bo]", got)
+	}
+	if got, ok := pb.Get("ada"); !ok || got != "333" {
+		t.Errorf("Get(ada) = %q, %v; want 333, true", got, ok)
+	}
+	if got, ok := pb.Get("bo"); !ok || got != "444" {
+		t.Errorf("Get(bo) = %q, %v; want 444, true", got, ok)
+	}
+}
+
+func TestDeleteOnlyRemovesTarget(t *testing.T) {
+	pb := NewPhoneBook()
+	pb.Set("cy", "3")
+	pb.Set("ada", "1")
+	pb.Set("bo", "2")
+
+	if !pb.Delete("bo") {
+		t.Error("Delete(bo) = false, want true")
+	}
+	if _, ok := pb.Get("bo"); ok {
+		t.Error("the deleted entry is still present")
+	}
+	if got := pb.Names(); !slices.Equal(got, []string{"ada", "cy"}) {
+		t.Errorf("Names after deleting bo = %v, want [ada cy]", got)
+	}
+	if pb.Delete("bo") {
+		t.Error("second Delete(bo) = true, want false")
+	}
+	if !pb.Delete("ada") || !pb.Delete("cy") {
+		t.Error("deleting the remaining entries should return true")
+	}
+	if got := pb.Names(); len(got) != 0 {
+		t.Errorf("Names after deleting everything = %v, want empty", got)
+	}
+}
+
+func TestDeleteFromEmptyBook(t *testing.T) {
+	pb := NewPhoneBook()
+	if pb.Delete("nobody") {
+		t.Error("Delete on an empty book returned true")
+	}
+	if got := pb.Names(); len(got) != 0 {
+		t.Errorf("Names on an empty book = %v, want empty", got)
+	}
+}
+
+func TestSetAfterDelete(t *testing.T) {
+	pb := NewPhoneBook()
+	pb.Set("ada", "111")
+	if !pb.Delete("ada") {
+		t.Fatal("Delete(ada) = false, want true")
+	}
+	pb.Set("ada", "222")
+	if got, ok := pb.Get("ada"); !ok || got != "222" {
+		t.Errorf("Get after re-adding = %q, %v; want 222, true", got, ok)
+	}
+	if got := pb.Names(); !slices.Equal(got, []string{"ada"}) {
+		t.Errorf("Names after re-adding = %v, want [ada]", got)
+	}
+}
+
+func TestEmptyName(t *testing.T) {
+	pb := NewPhoneBook()
+	pb.Set("", "555")
+	if got, ok := pb.Get(""); !ok || got != "555" {
+		t.Errorf("Get(empty name) = %q, %v; want 555, true", got, ok)
+	}
+	if !pb.Delete("") {
+		t.Error("Delete(empty name) = false, want true")
+	}
+	pb.Set("", "")
+	if got, ok := pb.Get(""); !ok || got != "" {
+		t.Errorf("Get(empty name, empty number) = %q, %v; want \"\", true", got, ok)
+	}
+}
+
+func TestNamesUnicodeSort(t *testing.T) {
+	pb := NewPhoneBook()
+	pb.Set("é", "1")
+	pb.Set("z", "2")
+	pb.Set("日", "3")
+	pb.Set("a", "4")
+
+	want := []string{"a", "z", "é", "日"}
+	if got := pb.Names(); !slices.Equal(got, want) {
+		t.Fatalf("Names = %v, want %v", got, want)
 	}
 }
 `,

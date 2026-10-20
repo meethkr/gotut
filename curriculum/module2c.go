@@ -480,6 +480,55 @@ func TestGetMissing(t *testing.T) {
 	}
 }
 
+func TestGetMissingBoundaryIDs(t *testing.T) {
+	db := newDB(t)
+	for _, id := range []int64{0, -1, -999, 999} {
+		if _, err := GetNote(db, id); !errors.Is(err, ErrNoteNotFound) {
+			t.Errorf("GetNote(%d) = %v, want ErrNoteNotFound", id, err)
+		}
+	}
+}
+
+func TestCreateAssignsDistinctIDs(t *testing.T) {
+	db := newDB(t)
+
+	first, err := CreateNote(db, Note{Title: "one", Body: "1"})
+	if err != nil {
+		t.Fatalf("CreateNote first: %v", err)
+	}
+	second, err := CreateNote(db, Note{Title: "two", Body: "2"})
+	if err != nil {
+		t.Fatalf("CreateNote second: %v", err)
+	}
+	if first == second {
+		t.Fatalf("both notes got id %d; ids must be distinct", first)
+	}
+
+	n, err := GetNote(db, second)
+	if err != nil {
+		t.Fatalf("GetNote: %v", err)
+	}
+	if n.ID != second || n.Title != "two" || n.Body != "2" {
+		t.Fatalf("GetNote = %+v, want the second note", n)
+	}
+}
+
+func TestCreateEmptyStrings(t *testing.T) {
+	db := newDB(t)
+
+	id, err := CreateNote(db, Note{})
+	if err != nil {
+		t.Fatalf("CreateNote(empty): %v", err)
+	}
+	n, err := GetNote(db, id)
+	if err != nil {
+		t.Fatalf("GetNote: %v", err)
+	}
+	if n.Title != "" || n.Body != "" {
+		t.Fatalf("GetNote = %+v, want empty title and body", n)
+	}
+}
+
 func TestListOrdered(t *testing.T) {
 	db := newDB(t)
 	for _, title := range []string{"a", "b", "c"} {
@@ -516,6 +565,74 @@ func TestListEmptyIsNonNil(t *testing.T) {
 	}
 }
 
+func TestListAfterDeleteKeepsOrder(t *testing.T) {
+	db := newDB(t)
+
+	var ids []int64
+	for _, title := range []string{"a", "b", "c", "d"} {
+		id, err := CreateNote(db, Note{Title: title, Body: "x"})
+		if err != nil {
+			t.Fatalf("CreateNote(%q): %v", title, err)
+		}
+		ids = append(ids, id)
+	}
+	if err := DeleteNote(db, ids[1]); err != nil {
+		t.Fatalf("DeleteNote: %v", err)
+	}
+	if err := DeleteNote(db, ids[3]); err != nil {
+		t.Fatalf("DeleteNote: %v", err)
+	}
+
+	notes, err := ListNotes(db)
+	if err != nil {
+		t.Fatalf("ListNotes: %v", err)
+	}
+	if len(notes) != 2 {
+		t.Fatalf("len = %d, want 2: %+v", len(notes), notes)
+	}
+	if notes[0].ID != ids[0] || notes[0].Title != "a" {
+		t.Errorf("notes[0] = %+v, want id %d title a", notes[0], ids[0])
+	}
+	if notes[1].ID != ids[2] || notes[1].Title != "c" {
+		t.Errorf("notes[1] = %+v, want id %d title c", notes[1], ids[2])
+	}
+}
+
+func TestOpenIsIdempotentAndPersists(t *testing.T) {
+	dsn := "file:" + filepath.Join(t.TempDir(), "persist.db")
+
+	first, err := Open(dsn)
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+	id, err := CreateNote(first, Note{Title: "kept", Body: "body"})
+	if err != nil {
+		first.Close()
+		t.Fatalf("CreateNote: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	second, err := Open(dsn)
+	if err != nil {
+		t.Fatalf("second Open (CREATE TABLE IF NOT EXISTS should tolerate an existing table): %v", err)
+	}
+	defer second.Close()
+
+	n, err := GetNote(second, id)
+	if err != nil {
+		t.Fatalf("GetNote after reopen: %v", err)
+	}
+	if n.Title != "kept" || n.Body != "body" {
+		t.Fatalf("GetNote after reopen = %+v", n)
+	}
+	notes, err := ListNotes(second)
+	if err != nil || len(notes) != 1 {
+		t.Fatalf("ListNotes after reopen = %+v, %v; want one note", notes, err)
+	}
+}
+
 func TestDelete(t *testing.T) {
 	db := newDB(t)
 	id, _ := CreateNote(db, Note{Title: "gone", Body: "x"})
@@ -525,6 +642,23 @@ func TestDelete(t *testing.T) {
 	}
 	if err := DeleteNote(db, id); !errors.Is(err, ErrNoteNotFound) {
 		t.Fatalf("second DeleteNote = %v, want ErrNoteNotFound", err)
+	}
+}
+
+func TestDeleteMissingIDs(t *testing.T) {
+	db := newDB(t)
+	kept, err := CreateNote(db, Note{Title: "kept", Body: "x"})
+	if err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+
+	for _, id := range []int64{0, -1, 999} {
+		if err := DeleteNote(db, id); !errors.Is(err, ErrNoteNotFound) {
+			t.Errorf("DeleteNote(%d) = %v, want ErrNoteNotFound", id, err)
+		}
+	}
+	if _, err := GetNote(db, kept); err != nil {
+		t.Fatalf("a failed delete removed another note: %v", err)
 	}
 }
 
@@ -543,6 +677,74 @@ func TestSearch(t *testing.T) {
 	}
 	if _, err := SearchNotes(db, "%"); err != nil {
 		t.Fatalf("SearchNotes with a wildcard character should still be safe: %v", err)
+	}
+}
+
+func TestSearchMultipleMatchesAndNoMatch(t *testing.T) {
+	db := newDB(t)
+	for _, title := range []string{"tips one", "other", "tips two"} {
+		if _, err := CreateNote(db, Note{Title: title, Body: "x"}); err != nil {
+			t.Fatalf("CreateNote: %v", err)
+		}
+	}
+
+	notes, err := SearchNotes(db, "tips")
+	if err != nil {
+		t.Fatalf("SearchNotes: %v", err)
+	}
+	if len(notes) != 2 {
+		t.Fatalf("len = %d, want 2: %+v", len(notes), notes)
+	}
+	got := map[string]bool{}
+	for _, n := range notes {
+		got[n.Title] = true
+	}
+	if !got["tips one"] || !got["tips two"] {
+		t.Fatalf("SearchNotes = %+v, want tips one and tips two", notes)
+	}
+
+	none, err := SearchNotes(db, "no-such-term")
+	if err != nil {
+		t.Fatalf("SearchNotes(no match): %v", err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("SearchNotes(no match) = %+v, want no rows", none)
+	}
+}
+
+func TestSearchOnlyMatchesTitle(t *testing.T) {
+	db := newDB(t)
+	_, _ = CreateNote(db, Note{Title: "alpha", Body: "secret keyword"})
+
+	notes, err := SearchNotes(db, "keyword")
+	if err != nil {
+		t.Fatalf("SearchNotes: %v", err)
+	}
+	if len(notes) != 0 {
+		t.Fatalf("SearchNotes matched the body: %+v", notes)
+	}
+}
+
+func TestSearchHostileInputDoesNotBreakSchema(t *testing.T) {
+	db := newDB(t)
+	if _, err := CreateNote(db, Note{Title: "survivor", Body: "x"}); err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+
+	notes, err := SearchNotes(db, "'; DROP TABLE notes; --")
+	if err != nil {
+		t.Fatalf("SearchNotes(hostile term) = %v; the term must be a parameter, not SQL", err)
+	}
+	if len(notes) != 0 {
+		t.Fatalf("SearchNotes(hostile term) = %+v, want no rows", notes)
+	}
+
+	all, err := ListNotes(db)
+	if err != nil {
+		t.Fatalf("ListNotes after a hostile search: %v", err)
+	}
+	if len(all) != 1 || all[0].Title != "survivor" {
+		t.Fatalf("the notes table was damaged: %+v", all)
 	}
 }
 `,
@@ -899,6 +1101,145 @@ func TestTransferBadAmount(t *testing.T) {
 		if err := Transfer(db, a, b, amount); err == nil {
 			t.Fatalf("Transfer(amount=%d) should fail", amount)
 		}
+	}
+}
+
+func TestGetAccountMissingBoundaryIDs(t *testing.T) {
+	db := newBank(t)
+	for _, id := range []int{0, -1, 999} {
+		if _, err := GetAccount(db, id); !errors.Is(err, ErrAccountNotFound) {
+			t.Errorf("GetAccount(%d) = %v, want ErrAccountNotFound", id, err)
+		}
+	}
+}
+
+func TestTotalBalanceEmptyAndMultiple(t *testing.T) {
+	db := newBank(t)
+
+	total, err := TotalBalance(db)
+	if err != nil {
+		t.Fatalf("TotalBalance(empty): %v", err)
+	}
+	if total != 0 {
+		t.Fatalf("TotalBalance(empty) = %d, want 0", total)
+	}
+
+	for _, in := range []struct {
+		owner   string
+		balance int
+	}{{"ada", 100}, {"bo", 20}, {"cy", 5}} {
+		if _, err := CreateAccount(db, in.owner, in.balance); err != nil {
+			t.Fatalf("CreateAccount(%s): %v", in.owner, err)
+		}
+	}
+	total, err = TotalBalance(db)
+	if err != nil {
+		t.Fatalf("TotalBalance: %v", err)
+	}
+	if total != 125 {
+		t.Fatalf("TotalBalance = %d, want 125", total)
+	}
+}
+
+func TestTransferExactBalanceAndOneOver(t *testing.T) {
+	db := newBank(t)
+	a, _ := CreateAccount(db, "ada", 50)
+	b, _ := CreateAccount(db, "bo", 10)
+
+	if err := Transfer(db, a, b, 51); !errors.Is(err, ErrInsufficientFunds) {
+		t.Fatalf("Transfer(51 from 50) = %v, want ErrInsufficientFunds", err)
+	}
+	gotA, _ := GetAccount(db, a)
+	gotB, _ := GetAccount(db, b)
+	if gotA.Balance != 50 || gotB.Balance != 10 {
+		t.Fatalf("the failed boundary transfer changed balances: %d, %d", gotA.Balance, gotB.Balance)
+	}
+
+	if err := Transfer(db, a, b, 50); err != nil {
+		t.Fatalf("Transfer(exact balance): %v", err)
+	}
+	gotA, _ = GetAccount(db, a)
+	gotB, _ = GetAccount(db, b)
+	if gotA.Balance != 0 || gotB.Balance != 60 {
+		t.Fatalf("balances = %d, %d; want 0, 60", gotA.Balance, gotB.Balance)
+	}
+	if total, err := TotalBalance(db); err != nil || total != 60 {
+		t.Fatalf("TotalBalance = %d, %v; want 60, nil", total, err)
+	}
+}
+
+func TestTransferMissingSource(t *testing.T) {
+	db := newBank(t)
+	b, _ := CreateAccount(db, "bo", 15)
+
+	if err := Transfer(db, 999, b, 5); !errors.Is(err, ErrAccountNotFound) {
+		t.Fatalf("Transfer from a missing account = %v, want ErrAccountNotFound", err)
+	}
+	gotB, _ := GetAccount(db, b)
+	if gotB.Balance != 15 {
+		t.Fatalf("the destination changed on a failed transfer: %d", gotB.Balance)
+	}
+}
+
+func TestTransferBadAmountIsTypedAndAtomic(t *testing.T) {
+	db := newBank(t)
+	a, _ := CreateAccount(db, "ada", 100)
+	b, _ := CreateAccount(db, "bo", 25)
+
+	for _, amount := range []int{0, -1, -100} {
+		if err := Transfer(db, a, b, amount); !errors.Is(err, ErrBadAmount) {
+			t.Errorf("Transfer(amount=%d) = %v, want ErrBadAmount", amount, err)
+		}
+	}
+	gotA, _ := GetAccount(db, a)
+	gotB, _ := GetAccount(db, b)
+	if gotA.Balance != 100 || gotB.Balance != 25 {
+		t.Fatalf("a rejected transfer changed balances: %d, %d", gotA.Balance, gotB.Balance)
+	}
+	if total, err := TotalBalance(db); err != nil || total != 125 {
+		t.Fatalf("TotalBalance = %d, %v; want 125, nil", total, err)
+	}
+}
+
+func TestFailedTransfersPreserveTotal(t *testing.T) {
+	db := newBank(t)
+	a, _ := CreateAccount(db, "ada", 40)
+	b, _ := CreateAccount(db, "bo", 10)
+	before, _ := TotalBalance(db)
+
+	if err := Transfer(db, a, b, 41); !errors.Is(err, ErrInsufficientFunds) {
+		t.Fatalf("Transfer = %v, want ErrInsufficientFunds", err)
+	}
+	if err := Transfer(db, a, 999, 5); !errors.Is(err, ErrAccountNotFound) {
+		t.Fatalf("Transfer = %v, want ErrAccountNotFound", err)
+	}
+	after, err := TotalBalance(db)
+	if err != nil {
+		t.Fatalf("TotalBalance: %v", err)
+	}
+	if after != before {
+		t.Fatalf("failed transfers changed the total: %d -> %d", before, after)
+	}
+}
+
+func TestSequentialTransfers(t *testing.T) {
+	db := newBank(t)
+	a, _ := CreateAccount(db, "ada", 100)
+	b, _ := CreateAccount(db, "bo", 0)
+
+	if err := Transfer(db, a, b, 30); err != nil {
+		t.Fatalf("first Transfer: %v", err)
+	}
+	if err := Transfer(db, b, a, 10); err != nil {
+		t.Fatalf("second Transfer: %v", err)
+	}
+	gotA, _ := GetAccount(db, a)
+	gotB, _ := GetAccount(db, b)
+	if gotA.Balance != 80 || gotB.Balance != 20 {
+		t.Fatalf("balances = %d, %d; want 80, 20", gotA.Balance, gotB.Balance)
+	}
+	if total, err := TotalBalance(db); err != nil || total != 100 {
+		t.Fatalf("TotalBalance = %d, %v; want 100, nil", total, err)
 	}
 }
 `,
@@ -1497,6 +1838,132 @@ func TestTotalPoints(t *testing.T) {
 	}
 }
 
+func TestGetScoreMissingBoundaryIDs(t *testing.T) {
+	db := newRepo(t)
+	for _, id := range []int64{0, -1, 999} {
+		if _, err := GetScore(db, id); !errors.Is(err, ErrScoreNotFound) {
+			t.Errorf("GetScore(%d) = %v, want ErrScoreNotFound", id, err)
+		}
+	}
+}
+
+func TestAddScoreSamePlayerGetsDistinctRows(t *testing.T) {
+	db := newRepo(t)
+
+	first, err := AddScore(db, "ada", 10)
+	if err != nil {
+		t.Fatalf("AddScore: %v", err)
+	}
+	second, err := AddScore(db, "ada", 20)
+	if err != nil {
+		t.Fatalf("AddScore: %v", err)
+	}
+	if first == second {
+		t.Fatalf("both scores got id %d; ids must be distinct", first)
+	}
+
+	for _, tc := range []struct {
+		id     int64
+		points int
+	}{{first, 10}, {second, 20}} {
+		s, err := GetScore(db, tc.id)
+		if err != nil {
+			t.Fatalf("GetScore(%d): %v", tc.id, err)
+		}
+		if s.Player != "ada" || s.Points != tc.points {
+			t.Errorf("GetScore(%d) = %+v, want player ada, points %d", tc.id, s, tc.points)
+		}
+	}
+}
+
+func TestTopScoresThresholdIsInclusive(t *testing.T) {
+	db := newRepo(t)
+	for _, in := range []struct {
+		player string
+		points int
+	}{{"low", 10}, {"edge", 20}, {"high", 30}} {
+		if _, err := AddScore(db, in.player, in.points); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := TopScores(db, 20, 10)
+	if err != nil {
+		t.Fatalf("TopScores: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("TopScores(20) = %+v, want the edge and high scores", got)
+	}
+	if got[0].Player != "high" || got[1].Player != "edge" {
+		t.Fatalf("TopScores order = %+v, want high then edge", got)
+	}
+}
+
+func TestTopScoresLimitAndNegativePoints(t *testing.T) {
+	db := newRepo(t)
+	for _, in := range []struct {
+		player string
+		points int
+	}{{"neg", -5}, {"zero", 0}, {"pos", 5}} {
+		if _, err := AddScore(db, in.player, in.points); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	all, err := TopScores(db, -10, 100)
+	if err != nil {
+		t.Fatalf("TopScores: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("TopScores(-10, 100) returned %d rows, want all 3: %+v", len(all), all)
+	}
+	if all[0].Player != "pos" || all[1].Player != "zero" || all[2].Player != "neg" {
+		t.Fatalf("TopScores order = %+v, want pos, zero, neg", all)
+	}
+
+	two, err := TopScores(db, -10, 2)
+	if err != nil {
+		t.Fatalf("TopScores: %v", err)
+	}
+	if len(two) != 2 || two[0].Player != "pos" || two[1].Player != "zero" {
+		t.Fatalf("TopScores limit 2 = %+v, want pos and zero", two)
+	}
+
+	if got, err := TotalPoints(db); err != nil || got != 0 {
+		t.Fatalf("TotalPoints = %d, %v; want 0, nil", got, err)
+	}
+}
+
+func TestTopScoresNoMatchWithRowsIsNonNil(t *testing.T) {
+	db := newRepo(t)
+	_, _ = AddScore(db, "ada", 10)
+
+	got, err := TopScores(db, 11, 10)
+	if err != nil {
+		t.Fatalf("TopScores: %v", err)
+	}
+	if got == nil {
+		t.Fatal("TopScores returned nil for an empty result; return an empty slice")
+	}
+	if len(got) != 0 {
+		t.Fatalf("TopScores = %+v, want no rows", got)
+	}
+}
+
+func TestTotalPointsWithNegativeScores(t *testing.T) {
+	db := newRepo(t)
+	_, _ = AddScore(db, "a", 10)
+	_, _ = AddScore(db, "b", -15)
+
+	got, err := TotalPoints(db)
+	if err != nil {
+		t.Fatalf("TotalPoints: %v", err)
+	}
+	if got != -5 {
+		t.Fatalf("TotalPoints = %d, want -5", got)
+	}
+}
+
 var _ = sql.ErrNoRows
 `,
 				}},
@@ -1813,6 +2280,139 @@ func TestAccountsFor(t *testing.T) {
 	}
 	if none == nil || len(none) != 0 {
 		t.Fatalf("AccountsFor(nil) = %v, want an empty non-nil slice", none)
+	}
+}
+
+func TestGetAccountMissingBoundaryIDs(t *testing.T) {
+	db := newBank(t)
+	for _, id := range []int{0, -1, 999} {
+		if _, err := GetAccount(db, id); !errors.Is(err, ErrAccountNotFound) {
+			t.Errorf("GetAccount(%d) = %v, want ErrAccountNotFound", id, err)
+		}
+	}
+}
+
+func TestTransferExactBalanceAndOneOver(t *testing.T) {
+	db := newBank(t)
+	a, _ := CreateAccount(db, "ada", 50)
+	b, _ := CreateAccount(db, "bo", 10)
+
+	if err := Transfer(db, a, b, 51); !errors.Is(err, ErrInsufficientFunds) {
+		t.Fatalf("Transfer(51 from 50) = %v, want ErrInsufficientFunds", err)
+	}
+	gotA, _ := GetAccount(db, a)
+	gotB, _ := GetAccount(db, b)
+	if gotA.Balance != 50 || gotB.Balance != 10 {
+		t.Fatalf("the failed boundary transfer changed balances: %d, %d", gotA.Balance, gotB.Balance)
+	}
+
+	if err := Transfer(db, a, b, 50); err != nil {
+		t.Fatalf("Transfer(exact balance): %v", err)
+	}
+	gotA, _ = GetAccount(db, a)
+	gotB, _ = GetAccount(db, b)
+	if gotA.Balance != 0 || gotB.Balance != 60 {
+		t.Fatalf("balances = %d, %d; want 0, 60", gotA.Balance, gotB.Balance)
+	}
+}
+
+func TestTransferMissingSource(t *testing.T) {
+	db := newBank(t)
+	b, _ := CreateAccount(db, "bo", 15)
+
+	if err := Transfer(db, 999, b, 5); !errors.Is(err, ErrAccountNotFound) {
+		t.Fatalf("Transfer from a missing account = %v, want ErrAccountNotFound", err)
+	}
+	gotB, _ := GetAccount(db, b)
+	if gotB.Balance != 15 {
+		t.Fatalf("the destination changed on a failed transfer: %d", gotB.Balance)
+	}
+}
+
+func TestTransferBadAmountIsTypedAndAtomic(t *testing.T) {
+	db := newBank(t)
+	a, _ := CreateAccount(db, "ada", 100)
+	b, _ := CreateAccount(db, "bo", 25)
+
+	for _, amount := range []int{0, -1, -100} {
+		if err := Transfer(db, a, b, amount); !errors.Is(err, ErrBadAmount) {
+			t.Errorf("Transfer(amount=%d) = %v, want ErrBadAmount", amount, err)
+		}
+	}
+	gotA, _ := GetAccount(db, a)
+	gotB, _ := GetAccount(db, b)
+	if gotA.Balance != 100 || gotB.Balance != 25 {
+		t.Fatalf("a rejected transfer changed balances: %d, %d", gotA.Balance, gotB.Balance)
+	}
+}
+
+func TestAccountsForOrderDuplicatesAndMissing(t *testing.T) {
+	db := newBank(t)
+	a, _ := CreateAccount(db, "ada", 1)
+	b, _ := CreateAccount(db, "bo", 2)
+	c, _ := CreateAccount(db, "cy", 3)
+
+	// Unsorted input with a duplicate: SQL's IN deduplicates, and the result
+	// must still come back ordered by id.
+	got, err := AccountsFor(db, []int{c, a, c})
+	if err != nil {
+		t.Fatalf("AccountsFor: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("AccountsFor([c a c]) returned %d rows, want 2: %+v", len(got), got)
+	}
+	if got[0].ID != a || got[1].ID != c {
+		t.Fatalf("AccountsFor([c a c]) = %+v, want ids %d then %d", got, a, c)
+	}
+
+	mixed, err := AccountsFor(db, []int{b, 999})
+	if err != nil {
+		t.Fatalf("AccountsFor(missing id): %v", err)
+	}
+	if len(mixed) != 1 || mixed[0].ID != b {
+		t.Fatalf("AccountsFor([b 999]) = %+v, want only id %d", mixed, b)
+	}
+
+	none, err := AccountsFor(db, []int{998, 999})
+	if err != nil {
+		t.Fatalf("AccountsFor(all missing): %v", err)
+	}
+	if none == nil || len(none) != 0 {
+		t.Fatalf("AccountsFor(all missing) = %v, want an empty non-nil slice", none)
+	}
+
+	empty, err := AccountsFor(db, []int{})
+	if err != nil {
+		t.Fatalf("AccountsFor(empty): %v", err)
+	}
+	if empty == nil || len(empty) != 0 {
+		t.Fatalf("AccountsFor(empty) = %v, want an empty non-nil slice", empty)
+	}
+}
+
+func TestSequentialTransfersPreserveTotal(t *testing.T) {
+	db := newBank(t)
+	a, _ := CreateAccount(db, "ada", 100)
+	b, _ := CreateAccount(db, "bo", 0)
+
+	if err := Transfer(db, a, b, 30); err != nil {
+		t.Fatalf("first Transfer: %v", err)
+	}
+	if err := Transfer(db, b, a, 10); err != nil {
+		t.Fatalf("second Transfer: %v", err)
+	}
+	gotA, _ := GetAccount(db, a)
+	gotB, _ := GetAccount(db, b)
+	if gotA.Balance != 80 || gotB.Balance != 20 {
+		t.Fatalf("balances = %d, %d; want 80, 20", gotA.Balance, gotB.Balance)
+	}
+
+	var total int
+	if err := db.Get(&total, "SELECT COALESCE(SUM(balance), 0) FROM accounts"); err != nil {
+		t.Fatalf("sum: %v", err)
+	}
+	if total != 100 {
+		t.Fatalf("total balance = %d, want 100", total)
 	}
 }
 
@@ -2385,6 +2985,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -2446,6 +3047,167 @@ func TestLoadConfigErrors(t *testing.T) {
 	}
 }
 
+func TestLoadConfigEmptyValuesUseDefaults(t *testing.T) {
+	cfg, err := LoadConfig(env(map[string]string{
+		"DATABASE_URL": "file:x.db",
+		"ADDR":         "",
+		"LOG_LEVEL":    "",
+		"READ_TIMEOUT": "",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Addr != ":8080" {
+		t.Errorf("Addr = %q, want :8080", cfg.Addr)
+	}
+	if cfg.DatabaseURL != "file:x.db" {
+		t.Errorf("DatabaseURL = %q, want file:x.db", cfg.DatabaseURL)
+	}
+	if cfg.LogLevel != slog.LevelInfo {
+		t.Errorf("LogLevel = %v, want Info", cfg.LogLevel)
+	}
+	if cfg.ReadTimeout != 10*time.Second {
+		t.Errorf("ReadTimeout = %v, want 10s", cfg.ReadTimeout)
+	}
+}
+
+func TestLoadConfigLogLevels(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want slog.Level
+	}{
+		{"debug", slog.LevelDebug},
+		{"info", slog.LevelInfo},
+		{"warn", slog.LevelWarn},
+		{"error", slog.LevelError},
+	}
+	for _, tc := range tests {
+		t.Run(tc.raw, func(t *testing.T) {
+			cfg, err := LoadConfig(env(map[string]string{
+				"DATABASE_URL": "file:x.db",
+				"LOG_LEVEL":    tc.raw,
+			}))
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if cfg.LogLevel != tc.want {
+				t.Fatalf("LogLevel = %v, want %v", cfg.LogLevel, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoadConfigReadTimeoutVariants(t *testing.T) {
+	tests := []struct {
+		raw  string
+		want time.Duration
+	}{
+		{"250ms", 250 * time.Millisecond},
+		{"1m30s", 90 * time.Second},
+		{"0s", 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.raw, func(t *testing.T) {
+			cfg, err := LoadConfig(env(map[string]string{
+				"DATABASE_URL": "file:x.db",
+				"READ_TIMEOUT": tc.raw,
+			}))
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if cfg.ReadTimeout != tc.want {
+				t.Fatalf("ReadTimeout = %v, want %v", cfg.ReadTimeout, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoadConfigInvalidLogLevelListsAcceptedValues(t *testing.T) {
+	_, err := LoadConfig(env(map[string]string{
+		"DATABASE_URL": "file:x.db",
+		"LOG_LEVEL":    "verbose",
+	}))
+	if err == nil {
+		t.Fatal("an invalid LOG_LEVEL should be an error")
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, "log_level") {
+		t.Fatalf("the error does not name LOG_LEVEL: %q", err)
+	}
+	for _, want := range []string{"debug", "info", "warn", "error"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the error does not list the accepted value %q: %q", want, err)
+		}
+	}
+}
+
+func TestLoadConfigInvalidValuesAreCaseSensitive(t *testing.T) {
+	for _, raw := range []string{"INFO", "Debug", "warning"} {
+		if _, err := LoadConfig(env(map[string]string{
+			"DATABASE_URL": "file:x.db",
+			"LOG_LEVEL":    raw,
+		})); err == nil {
+			t.Errorf("LOG_LEVEL %q should be rejected; only debug, info, warn and error are accepted", raw)
+		}
+	}
+}
+
+func TestLoadConfigBadTimeoutIsNamed(t *testing.T) {
+	for _, raw := range []string{"banana", "10", "-"} {
+		_, err := LoadConfig(env(map[string]string{
+			"DATABASE_URL": "file:x.db",
+			"READ_TIMEOUT": raw,
+		}))
+		if err == nil {
+			t.Errorf("READ_TIMEOUT %q should be an error", raw)
+			continue
+		}
+		if !strings.Contains(err.Error(), "READ_TIMEOUT") {
+			t.Errorf("the error for READ_TIMEOUT %q does not name the variable: %q", raw, err)
+		}
+	}
+}
+
+func TestLoadConfigJoinsAllErrors(t *testing.T) {
+	_, err := LoadConfig(env(map[string]string{
+		"LOG_LEVEL":    "nope",
+		"READ_TIMEOUT": "banana",
+	}))
+	if err == nil {
+		t.Fatal("expected a joined error")
+	}
+	msg := err.Error()
+	for _, want := range []string{"DATABASE_URL", "LOG_LEVEL", "READ_TIMEOUT"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("errors.Join did not report %s: %q", want, msg)
+		}
+	}
+}
+
+func TestLoadConfigAllOverrides(t *testing.T) {
+	cfg, err := LoadConfig(env(map[string]string{
+		"DATABASE_URL": "postgres://db/app",
+		"ADDR":         "127.0.0.1:1234",
+		"LOG_LEVEL":    "error",
+		"READ_TIMEOUT": "45s",
+	}))
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.DatabaseURL != "postgres://db/app" {
+		t.Errorf("DatabaseURL = %q", cfg.DatabaseURL)
+	}
+	if cfg.Addr != "127.0.0.1:1234" {
+		t.Errorf("Addr = %q", cfg.Addr)
+	}
+	if cfg.LogLevel != slog.LevelError {
+		t.Errorf("LogLevel = %v, want Error", cfg.LogLevel)
+	}
+	if cfg.ReadTimeout != 45*time.Second {
+		t.Errorf("ReadTimeout = %v, want 45s", cfg.ReadTimeout)
+	}
+}
+
 func TestLoggerLevelFiltering(t *testing.T) {
 	var buf bytes.Buffer
 	l := NewJSONLogger(&buf, slog.LevelWarn)
@@ -2491,6 +3253,122 @@ func TestLogRequestFields(t *testing.T) {
 	}
 	if end["duration_ms"].(float64) != 1500 {
 		t.Fatalf("duration_ms = %v, want 1500", end["duration_ms"])
+	}
+}
+
+func TestLoggerLevelFilteringAllLevels(t *testing.T) {
+	tests := []struct {
+		name  string
+		level slog.Level
+		want  []string
+	}{
+		{"debug", slog.LevelDebug, []string{"DEBUG", "INFO", "WARN", "ERROR"}},
+		{"info", slog.LevelInfo, []string{"INFO", "WARN", "ERROR"}},
+		{"warn", slog.LevelWarn, []string{"WARN", "ERROR"}},
+		{"error", slog.LevelError, []string{"ERROR"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			l := NewJSONLogger(&buf, tc.level)
+
+			l.Debug("d")
+			l.Info("i")
+			l.Warn("w")
+			l.Error("e")
+
+			var got []string
+			for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+				if line == "" {
+					continue
+				}
+				var rec map[string]any
+				if err := json.Unmarshal([]byte(line), &rec); err != nil {
+					t.Fatalf("line is not JSON: %q: %v", line, err)
+				}
+				got = append(got, rec["level"].(string))
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("levels = %v, want %v (buffer: %s)", got, tc.want, buf.String())
+			}
+		})
+	}
+}
+
+func TestHelpersRespectLoggerLevel(t *testing.T) {
+	var buf bytes.Buffer
+	l := NewJSONLogger(&buf, slog.LevelWarn)
+
+	LogRequestStart(l, "GET", "/users", "req-1")
+	LogRequestEnd(l, "GET", "/users", 200, time.Second)
+
+	if buf.Len() != 0 {
+		t.Fatalf("Info-level helpers leaked through a Warn-level logger: %s", buf.String())
+	}
+}
+
+func TestLogRequestEndVariants(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  int
+		d       time.Duration
+		wantMS  float64
+	}{
+		{"no-content", 204, 0, 0},
+		{"sub-millisecond", 404, 250 * time.Microsecond, 0},
+		{"server-error", 500, 3 * time.Second, 3000},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			l := NewJSONLogger(&buf, slog.LevelInfo)
+			LogRequestEnd(l, "POST", "/items", tc.status, tc.d)
+
+			line := strings.TrimSpace(buf.String())
+			if line == "" {
+				t.Fatal("LogRequestEnd wrote nothing")
+			}
+			if strings.Contains(line, "\n") {
+				t.Fatalf("LogRequestEnd wrote more than one line: %q", line)
+			}
+
+			var rec map[string]any
+			if err := json.Unmarshal([]byte(line), &rec); err != nil {
+				t.Fatalf("line is not JSON: %q: %v", line, err)
+			}
+			if rec["msg"] != "request finished" {
+				t.Errorf("msg = %v, want request finished", rec["msg"])
+			}
+			if rec["method"] != "POST" || rec["path"] != "/items" {
+				t.Errorf("method/path = %v/%v, want POST//items", rec["method"], rec["path"])
+			}
+			if rec["status"].(float64) != float64(tc.status) {
+				t.Errorf("status = %v, want %d", rec["status"], tc.status)
+			}
+			if rec["duration_ms"].(float64) != tc.wantMS {
+				t.Errorf("duration_ms = %v, want %v", rec["duration_ms"], tc.wantMS)
+			}
+		})
+	}
+}
+
+func TestLogRequestStartFields(t *testing.T) {
+	var buf bytes.Buffer
+	l := NewJSONLogger(&buf, slog.LevelInfo)
+	LogRequestStart(l, "DELETE", "/items/7", "req-42")
+
+	var rec map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(buf.String())), &rec); err != nil {
+		t.Fatalf("line is not JSON: %v", err)
+	}
+	if rec["msg"] != "request started" {
+		t.Errorf("msg = %v, want request started", rec["msg"])
+	}
+	if rec["method"] != "DELETE" || rec["path"] != "/items/7" || rec["request_id"] != "req-42" {
+		t.Errorf("record = %v", rec)
+	}
+	if _, ok := rec["status"]; ok {
+		t.Errorf("a start record should not carry status: %v", rec)
 	}
 }
 `,
@@ -2598,7 +3476,7 @@ func main() {
 				Prompt: `This exercise is about a skill, not a concept: **reading a failing test suite and
 fixing the code it describes.**
 
-The three functions below are wrong in four separate ways. Press **Check**, read the
+The three functions below are wrong in four separate ways. Press **Test**, read the
 failures carefully, and fix them until everything passes. This is exactly the loop you
 will run a hundred times a week.
 
@@ -2743,6 +3621,112 @@ func TestStdDev(t *testing.T) {
 	got, _ = StdDev([]float64{3, 3, 3})
 	if !almost(got, 0) {
 		t.Fatalf("StdDev of a constant = %v, want 0", got)
+	}
+}
+
+func TestEmptySlice(t *testing.T) {
+	for name, fn := range map[string]func([]float64) (float64, error){
+		"Mean":   Mean,
+		"Median": Median,
+		"StdDev": StdDev,
+	} {
+		if _, err := fn([]float64{}); !errors.Is(err, ErrEmpty) {
+			t.Errorf("%s(empty slice) error = %v, want ErrEmpty", name, err)
+		}
+	}
+}
+
+func TestMeanTable(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []float64
+		want float64
+	}{
+		{"single", []float64{7}, 7},
+		{"fraction", []float64{1, 2}, 1.5},
+		{"negative fraction", []float64{-1, -2}, -1.5},
+		{"negatives cancel", []float64{-5, 0, 5}, 0},
+		{"zeros", []float64{0, 0, 0}, 0},
+		{"decimals", []float64{0.1, 0.2, 0.3}, 0.2},
+		{"unsorted", []float64{9, 1, 5}, 5},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Mean(tc.in)
+			if err != nil {
+				t.Fatalf("Mean(%v) error = %v", tc.in, err)
+			}
+			if !almost(got, tc.want) {
+				t.Fatalf("Mean(%v) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMedianTable(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []float64
+		want float64
+	}{
+		{"single", []float64{42}, 42},
+		{"two values", []float64{2, 1}, 1.5},
+		{"even duplicates", []float64{1, 2, 2, 3}, 2},
+		{"odd unsorted", []float64{9, 1, 5, 3, 7}, 5},
+		{"negative odd", []float64{-5, -1, -3}, -3},
+		{"negative even", []float64{-4, -1}, -2.5},
+		{"decimal pair", []float64{0.5, 1.5}, 1},
+		{"all equal", []float64{2, 2, 2, 2}, 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Median(tc.in)
+			if err != nil {
+				t.Fatalf("Median(%v) error = %v", tc.in, err)
+			}
+			if !almost(got, tc.want) {
+				t.Fatalf("Median(%v) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMedianDoesNotMutateEven(t *testing.T) {
+	in := []float64{4, 1, 3, 2}
+	before := append([]float64(nil), in...)
+
+	if _, err := Median(in); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(in, before) {
+		t.Fatalf("Median reordered the caller's even-length slice: %v", in)
+	}
+}
+
+func TestStdDevTable(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []float64
+		want float64
+	}{
+		// Population, not sample: dividing by n rather than n-1 matters here.
+		{"two values", []float64{2, 4}, 1},
+		{"four values", []float64{1, 2, 3, 4}, math.Sqrt(1.25)},
+		{"single value", []float64{7}, 0},
+		{"negative values", []float64{-1, 0, 1}, math.Sqrt(2.0 / 3.0)},
+		{"decimals", []float64{0.5, 1.5}, 0.5},
+		{"zeros", []float64{0, 0}, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := StdDev(tc.in)
+			if err != nil {
+				t.Fatalf("StdDev(%v) error = %v", tc.in, err)
+			}
+			if !almost(got, tc.want) {
+				t.Fatalf("StdDev(%v) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
 	}
 }
 `,
@@ -2946,6 +3930,134 @@ func TestRunServerAlreadyCancelled(t *testing.T) {
 		}
 	case <-time.After(6 * time.Second):
 		t.Fatal("RunServer hung on an already-cancelled context")
+	}
+}
+
+func TestRunServerContextDeadline(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- RunServer(ctx, &http.Server{Handler: http.NewServeMux()}, ln)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunServer = %v, want nil when the context deadline expires", err)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("RunServer did not return after the context deadline")
+	}
+
+	url := "http://" + ln.Addr().String() + "/"
+	if resp, err := http.Get(url); err == nil {
+		resp.Body.Close()
+		t.Fatal("the server is still accepting connections after the deadline")
+	}
+}
+
+func TestRunServerWaitsForInFlightRequest(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /slow", func(w http.ResponseWriter, r *http.Request) {
+		started <- struct{}{}
+		<-release
+		fmt.Fprint(w, "finished")
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- RunServer(ctx, &http.Server{Handler: mux}, ln)
+	}()
+
+	type response struct {
+		body string
+		err  error
+	}
+	respCh := make(chan response, 1)
+	go func() {
+		resp, err := http.Get("http://" + ln.Addr().String() + "/slow")
+		if err != nil {
+			respCh <- response{err: err}
+			return
+		}
+		defer resp.Body.Close()
+		b, readErr := io.ReadAll(resp.Body)
+		respCh <- response{body: string(b), err: readErr}
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the handler never started")
+	}
+
+	cancel()
+	// Let Shutdown begin while the handler is still blocked, so this really
+	// tests draining rather than an already-finished request.
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+
+	select {
+	case r := <-respCh:
+		if r.err != nil {
+			t.Fatalf("the in-flight request failed during shutdown: %v", r.err)
+		}
+		if r.body != "finished" {
+			t.Fatalf("in-flight body = %q, want finished", r.body)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the in-flight request never completed")
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunServer = %v, want nil after draining the request", err)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("RunServer did not return after the in-flight request finished")
+	}
+}
+
+func TestRunServerReturnsListenError(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Serve on a listener that is already closed: a real accept error, not a
+	// graceful http.ErrServerClosed.
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- RunServer(context.Background(), &http.Server{Handler: http.NewServeMux()}, ln)
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("RunServer returned nil for a closed listener")
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("RunServer did not return after a listen error")
 	}
 }
 `,

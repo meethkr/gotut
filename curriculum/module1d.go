@@ -347,41 +347,112 @@ func main() {
 					Content: `package main
 
 import (
+	"fmt"
 	"math"
 	"testing"
 )
 
 func TestRectangle(t *testing.T) {
-	r := Rectangle{Width: 4, Height: 3}
-	if math.Abs(r.Area()-12) > 1e-9 {
-		t.Errorf("Area = %v, want 12", r.Area())
+	cases := []struct {
+		name      string
+		r         Rectangle
+		area      float64
+		perimeter float64
+		isSquare  bool
+	}{
+		{"4x3", Rectangle{Width: 4, Height: 3}, 12, 14, false},
+		{"2x2", Rectangle{2, 2}, 4, 8, true},
+		{"zero value", Rectangle{}, 0, 0, true},
+		{"fractional", Rectangle{1.5, 2}, 3, 7, false},
+		{"wide and thin", Rectangle{1000, 0.5}, 500, 2001, false},
+		{"negative sides", Rectangle{-2, 3}, -6, 2, false},
+		{"equal fractional sides", Rectangle{2.5, 2.5}, 6.25, 10, true},
 	}
-	if math.Abs(r.Perimeter()-14) > 1e-9 {
-		t.Errorf("Perimeter = %v, want 14", r.Perimeter())
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.r.Area(); math.Abs(got-c.area) > 1e-9 {
+				t.Errorf("Area = %v, want %v", got, c.area)
+			}
+			if got := c.r.Perimeter(); math.Abs(got-c.perimeter) > 1e-9 {
+				t.Errorf("Perimeter = %v, want %v", got, c.perimeter)
+			}
+			if got := c.r.IsSquare(); got != c.isSquare {
+				t.Errorf("IsSquare = %v, want %v", got, c.isSquare)
+			}
+		})
 	}
-	if r.IsSquare() {
-		t.Error("4x3 reported as a square")
+
+	if (Rectangle{1, 1.0000001}).IsSquare() {
+		t.Error("nearly equal sides should not count as a square")
 	}
-	if !(Rectangle{2, 2}).IsSquare() {
-		t.Error("2x2 reported as not a square")
+}
+
+func TestRectangleReadsDoNotMutate(t *testing.T) {
+	r := Rectangle{4, 3}
+	_ = r.Area()
+	_ = r.Perimeter()
+	_ = r.IsSquare()
+	_ = r.String()
+	if r.Width != 4 || r.Height != 3 {
+		t.Fatalf("read-only methods changed the receiver: %+v", r)
 	}
 }
 
 func TestScaleMutates(t *testing.T) {
-	r := Rectangle{4, 3}
-	r.Scale(2.5)
-	if math.Abs(r.Width-10) > 1e-9 || math.Abs(r.Height-7.5) > 1e-9 {
-		t.Fatalf("after Scale(2.5): %+v, want {10 7.5}", r)
+	cases := []struct {
+		name   string
+		in     Rectangle
+		factor float64
+		want   Rectangle
+	}{
+		{"double and a half", Rectangle{4, 3}, 2.5, Rectangle{10, 7.5}},
+		{"identity", Rectangle{4, 3}, 1, Rectangle{4, 3}},
+		{"zero factor", Rectangle{4, 3}, 0, Rectangle{}},
+		{"negative factor", Rectangle{2, 5}, -1, Rectangle{-2, -5}},
+		{"zero value", Rectangle{}, 3, Rectangle{}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := c.in
+			r.Scale(c.factor)
+			if math.Abs(r.Width-c.want.Width) > 1e-9 || math.Abs(r.Height-c.want.Height) > 1e-9 {
+				t.Fatalf("after Scale(%v): %+v, want %+v", c.factor, r, c.want)
+			}
+		})
+	}
+}
+
+func TestScaleThroughPointer(t *testing.T) {
+	r := Rectangle{2, 3}
+	p := &r
+	p.Scale(2)
+	if r.Width != 4 || r.Height != 6 {
+		t.Fatalf("Scale through a pointer did not reach the receiver: %+v", r)
 	}
 }
 
 func TestString(t *testing.T) {
-	r := Rectangle{4, 3}
-	if got := r.String(); got != "4.00x3.00" {
-		t.Fatalf("String() = %q, want %q", got, "4.00x3.00")
+	cases := []struct {
+		r    Rectangle
+		want string
+	}{
+		{Rectangle{4, 3}, "4.00x3.00"},
+		{Rectangle{1.5, 2}, "1.50x2.00"},
+		{Rectangle{}, "0.00x0.00"},
+		{Rectangle{10, 0.5}, "10.00x0.50"},
+		{Rectangle{-1.5, -2}, "-1.50x-2.00"},
 	}
-	if got := (Rectangle{1.5, 2}).String(); got != "1.50x2.00" {
-		t.Fatalf("String() = %q, want %q", got, "1.50x2.00")
+	for _, c := range cases {
+		if got := c.r.String(); got != c.want {
+			t.Errorf("String() = %q, want %q", got, c.want)
+		}
+	}
+}
+
+func TestFmtUsesStringer(t *testing.T) {
+	r := Rectangle{4, 3}
+	if got := fmt.Sprint(r); got != "4.00x3.00" {
+		t.Fatalf("fmt.Sprint = %q, want the String method's output", got)
 	}
 }
 `,
@@ -506,11 +577,71 @@ import "testing"
 
 func TestAccountMethods(t *testing.T) {
 	a := NewAccount("Ada", 100)
+	if a == nil {
+		t.Fatal("NewAccount returned nil")
+	}
 	if a.Balance != 100 {
 		t.Fatalf("NewAccount balance = %d, want 100", a.Balance)
 	}
 	if got := a.Summary(); got != "Ada: 100" {
 		t.Errorf("Summary = %q, want %q", got, "Ada: 100")
+	}
+}
+
+func TestNewAccountZeroBalance(t *testing.T) {
+	a := NewAccount("Zed", 0)
+	if a == nil {
+		t.Fatal("NewAccount returned nil")
+	}
+	if a.Balance != 0 {
+		t.Errorf("NewAccount balance = %d, want 0", a.Balance)
+	}
+	if got := a.Summary(); got != "Zed: 0" {
+		t.Errorf("Summary = %q, want %q", got, "Zed: 0")
+	}
+}
+
+func TestZeroValueAccount(t *testing.T) {
+	var a Account
+	if got := a.Summary(); got != ": 0" {
+		t.Errorf("zero Account Summary = %q, want %q", got, ": 0")
+	}
+	if got := (&a).Deposit(25); got != 25 {
+		t.Errorf("Deposit on zero Account = %d, want 25", got)
+	}
+	if bal, ok := (&a).Withdraw(5); !ok || bal != 20 {
+		t.Errorf("Withdraw on zero Account = %d, %v; want 20, true", bal, ok)
+	}
+}
+
+func TestDeposit(t *testing.T) {
+	cases := []struct {
+		name   string
+		start  int
+		amount int
+		want   int
+	}{
+		{"positive", 100, 50, 150},
+		{"zero amount", 100, 0, 100},
+		{"into empty account", 0, 25, 25},
+		{"small balance", 10, 5, 15},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			a := NewAccount("Ada", c.start)
+			if got := a.Deposit(c.amount); got != c.want {
+				t.Errorf("Deposit(%d) returned %d, want %d", c.amount, got, c.want)
+			}
+			if a.Balance != c.want {
+				t.Errorf("balance after Deposit(%d) = %d, want %d", c.amount, a.Balance, c.want)
+			}
+		})
+	}
+
+	a := NewAccount("Ada", 10)
+	a.Deposit(5)
+	if got := a.Deposit(5); got != 20 || a.Balance != 20 {
+		t.Errorf("second Deposit = %d (balance %d), want 20", got, a.Balance)
 	}
 }
 
@@ -535,6 +666,46 @@ func TestDepositAndWithdraw(t *testing.T) {
 	}
 }
 
+func TestWithdrawBoundaries(t *testing.T) {
+	cases := []struct {
+		name    string
+		start   int
+		amount  int
+		wantBal int
+		wantOK  bool
+	}{
+		{"partial", 100, 40, 60, true},
+		{"exact full balance", 100, 100, 0, true},
+		{"one more than balance", 100, 101, 100, false},
+		{"from empty", 0, 1, 0, false},
+		{"from small balance", 3, 4, 3, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			a := NewAccount("Ada", c.start)
+			bal, ok := a.Withdraw(c.amount)
+			if ok != c.wantOK || bal != c.wantBal {
+				t.Errorf("Withdraw(%d) = %d, %v; want %d, %v", c.amount, bal, ok, c.wantBal, c.wantOK)
+			}
+			if a.Balance != c.wantBal {
+				t.Errorf("balance = %d, want %d", a.Balance, c.wantBal)
+			}
+		})
+	}
+}
+
+func TestSummarySnapshot(t *testing.T) {
+	a := NewAccount("Ada", 100)
+	snapshot := *a
+	a.Deposit(50)
+	if got := snapshot.Summary(); got != "Ada: 100" {
+		t.Errorf("value-receiver Summary should describe the copy, got %q", got)
+	}
+	if got := a.Summary(); got != "Ada: 150" {
+		t.Errorf("Summary after Deposit = %q, want %q", got, "Ada: 150")
+	}
+}
+
 func TestTransfer(t *testing.T) {
 	a := NewAccount("Ada", 100)
 	b := NewAccount("Bo", 10)
@@ -547,6 +718,33 @@ func TestTransfer(t *testing.T) {
 	}
 }
 
+func TestTransferBoundaries(t *testing.T) {
+	a := NewAccount("Ada", 100)
+	b := NewAccount("Bo", 25)
+
+	if !a.Transfer(b, 100) {
+		t.Fatal("transferring the exact balance should succeed")
+	}
+	if a.Balance != 0 || b.Balance != 125 {
+		t.Fatalf("after full transfer: %d, %d; want 0, 125", a.Balance, b.Balance)
+	}
+
+	if a.Transfer(b, 1) {
+		t.Fatal("a transfer from an empty account should fail")
+	}
+	if a.Balance != 0 || b.Balance != 125 {
+		t.Fatalf("a failed transfer changed something: %d, %d", a.Balance, b.Balance)
+	}
+
+	c := NewAccount("Cy", 10)
+	if !b.Transfer(c, 25) {
+		t.Fatal("a valid transfer to a non-empty account should succeed")
+	}
+	if b.Balance != 100 || c.Balance != 35 {
+		t.Fatalf("after transfer to non-empty: %d, %d; want 100, 35", b.Balance, c.Balance)
+	}
+}
+
 func TestTransferIsAtomic(t *testing.T) {
 	a := NewAccount("Ada", 100)
 	b := NewAccount("Bo", 0)
@@ -556,6 +754,14 @@ func TestTransferIsAtomic(t *testing.T) {
 	}
 	if a.Balance != 100 || b.Balance != 0 {
 		t.Fatalf("a failed transfer changed something: %d, %d", a.Balance, b.Balance)
+	}
+
+	b.Deposit(10)
+	if a.Transfer(b, 500) {
+		t.Fatal("a transfer of more than the balance succeeded")
+	}
+	if a.Balance != 100 || b.Balance != 10 {
+		t.Fatalf("a failed transfer changed the receiver: %d, %d", a.Balance, b.Balance)
 	}
 
 	if a.Transfer(b, 0) {
@@ -754,6 +960,23 @@ func TestPromotedFieldsAndMethods(t *testing.T) {
 	}
 }
 
+func TestFieldPromotionIsShared(t *testing.T) {
+	u := User{Base{ID: 1, CreatedAt: "x"}, "ada"}
+	u.Base.ID = 7
+	if u.ID != 7 {
+		t.Errorf("u.ID = %d after setting u.Base.ID, want 7", u.ID)
+	}
+	u.ID = 8
+	if u.Base.ID != 8 {
+		t.Errorf("u.Base.ID = %d after setting u.ID, want 8", u.Base.ID)
+	}
+
+	p := Product{Base{ID: 3}, "K", 1}
+	if p.CreatedAt != "" {
+		t.Errorf("promoted zero CreatedAt = %q, want empty", p.CreatedAt)
+	}
+}
+
 func TestDescribeOverrideAndPromotion(t *testing.T) {
 	u := User{Base{ID: 1, CreatedAt: "2024-01-01"}, "ada"}
 	if got, want := u.Describe(), "#1 created 2024-01-01 (user ada)"; got != want {
@@ -770,6 +993,53 @@ func TestDescribeOverrideAndPromotion(t *testing.T) {
 	}
 }
 
+func TestDescribeTable(t *testing.T) {
+	bases := []struct {
+		b    Base
+		want string
+	}{
+		{Base{1, "2024-01-01"}, "#1 created 2024-01-01"},
+		{Base{0, "never"}, "#0 created never"},
+		{Base{-3, ""}, "#-3 created "},
+	}
+	for _, c := range bases {
+		if got := c.b.Describe(); got != c.want {
+			t.Errorf("Base%+v.Describe() = %q, want %q", c.b, got, c.want)
+		}
+	}
+
+	users := []struct {
+		u        User
+		want     string
+		wantBase string
+	}{
+		{User{Base{1, "2024-01-01"}, "ada"}, "#1 created 2024-01-01 (user ada)", "#1 created 2024-01-01"},
+		{User{Base{0, ""}, ""}, "#0 created  (user )", "#0 created "},
+		{User{Base{42, "now"}, "bob"}, "#42 created now (user bob)", "#42 created now"},
+	}
+	for _, c := range users {
+		if got := c.u.Describe(); got != c.want {
+			t.Errorf("User%+v.Describe() = %q, want %q", c.u, got, c.want)
+		}
+		if got := c.u.Base.Describe(); got != c.wantBase {
+			t.Errorf("explicit u.Base.Describe() = %q, want %q", got, c.wantBase)
+		}
+	}
+
+	products := []struct {
+		p    Product
+		want string
+	}{
+		{Product{Base{2, "2024-02-02"}, "Keyboard", 99}, "#2 created 2024-02-02"},
+		{Product{Base{0, ""}, "", 0}, "#0 created "},
+	}
+	for _, c := range products {
+		if got := c.p.Describe(); got != c.want {
+			t.Errorf("Product%+v.Describe() = %q, want %q", c.p, got, c.want)
+		}
+	}
+}
+
 func TestAllIDs(t *testing.T) {
 	u := User{Base{ID: 1}, "ada"}
 	p := Product{Base{ID: 2}, "Keyboard", 99}
@@ -780,6 +1050,41 @@ func TestAllIDs(t *testing.T) {
 	if got := AllIDs(); len(got) != 0 {
 		t.Fatalf("AllIDs() = %v, want empty", got)
 	}
+}
+
+func TestAllIDsOrderAndDuplicates(t *testing.T) {
+	u1 := User{Base{ID: 1}, "a"}
+	u2 := User{Base{ID: 1}, "b"}
+	p := Product{Base{ID: 2}, "t", 9}
+
+	if got := AllIDs(u1, u2, p); !reflect.DeepEqual(got, []int{1, 1, 2}) {
+		t.Errorf("AllIDs = %v, want [1 1 2] (order and duplicates preserved)", got)
+	}
+	if got := AllIDs(p); !reflect.DeepEqual(got, []int{2}) {
+		t.Errorf("AllIDs(single) = %v, want [2]", got)
+	}
+	if got := AllIDs(Base{ID: 9}); !reflect.DeepEqual(got, []int{9}) {
+		t.Errorf("AllIDs(Base) = %v, want [9]", got)
+	}
+
+	var none []interface{ GetID() int }
+	if got := AllIDs(none...); len(got) != 0 {
+		t.Errorf("AllIDs(empty spread) = %v, want empty", got)
+	}
+}
+
+func TestPointersAlsoSatisfyGetID(t *testing.T) {
+	u := &User{Base{5, "x"}, "ada"}
+	p := &Product{Base{6, "y"}, "K", 1}
+
+	if got := AllIDs(u, p); !reflect.DeepEqual(got, []int{5, 6}) {
+		t.Fatalf("AllIDs(pointers) = %v, want [5 6]", got)
+	}
+
+	var _ interface{ GetID() int } = u
+	var _ interface{ GetID() int } = p
+	var _ interface{ GetID() int } = User{}
+	var _ interface{ GetID() int } = Product{}
 }
 `,
 				}},
@@ -1261,7 +1566,15 @@ func main() {
 
 import (
 	"math"
+	"slices"
 	"testing"
+)
+
+var (
+	_ Shape = Circle{}
+	_ Shape = Square{}
+	_ Shape = &Circle{}
+	_ Shape = &Square{}
 )
 
 func TestTotalArea(t *testing.T) {
@@ -1270,6 +1583,52 @@ func TestTotalArea(t *testing.T) {
 	}
 	if got := TotalArea(nil); got != 0 {
 		t.Errorf("TotalArea(nil) = %v, want 0", got)
+	}
+}
+
+func TestTotalAreaTable(t *testing.T) {
+	cases := []struct {
+		name   string
+		shapes []Shape
+		want   float64
+	}{
+		{"empty slice", []Shape{}, 0},
+		{"single square", []Shape{Square{2}}, 4},
+		{"single circle", []Shape{Circle{1}}, math.Pi},
+		{"mixed", []Shape{Circle{1}, Square{2}, Square{3}}, math.Pi + 13},
+		{"zero areas", []Shape{Circle{}, Square{}}, 0},
+		{"duplicates", []Shape{Square{1}, Square{1}, Square{1}}, 3},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := TotalArea(c.shapes); math.Abs(got-c.want) > 1e-9 {
+				t.Errorf("TotalArea = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestShapeNames(t *testing.T) {
+	cases := []struct {
+		s    Shape
+		name string
+	}{
+		{Circle{Radius: 1}, "circle"},
+		{Square{Side: 1}, "square"},
+		{Circle{}, "circle"},
+		{Square{}, "square"},
+	}
+	for _, c := range cases {
+		if got := c.s.Name(); got != c.name {
+			t.Errorf("%T.Name() = %q, want %q", c.s, got, c.name)
+		}
+	}
+
+	if got := (Circle{Radius: 2}).Area(); math.Abs(got-4*math.Pi) > 1e-9 {
+		t.Errorf("Circle{2}.Area() = %v, want %v", got, 4*math.Pi)
+	}
+	if got := (Square{Side: 2.5}).Area(); math.Abs(got-6.25) > 1e-9 {
+		t.Errorf("Square{2.5}.Area() = %v, want 6.25", got)
 	}
 }
 
@@ -1285,21 +1644,92 @@ func TestLargest(t *testing.T) {
 	if got := Largest(nil); got != nil {
 		t.Errorf("Largest(nil) = %v, want a true nil interface", got)
 	}
+	if got := Largest([]Shape{}); got != nil {
+		t.Errorf("Largest(empty) = %v, want a true nil interface", got)
+	}
+}
+
+func TestLargestTable(t *testing.T) {
+	cases := []struct {
+		name     string
+		shapes   []Shape
+		wantName string
+		wantArea float64
+	}{
+		{"circle wins", []Shape{Square{2}, Circle{10}}, "circle", math.Pi * 100},
+		{"square wins", []Shape{Circle{1}, Square{2}}, "square", 4},
+		{"single circle", []Shape{Circle{1}}, "circle", math.Pi},
+		{"biggest first", []Shape{Square{10}, Square{1}}, "square", 100},
+		{"biggest last", []Shape{Circle{0.5}, Square{3}}, "square", 9},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := Largest(c.shapes)
+			if got == nil {
+				t.Fatalf("Largest(%v) = nil, want a shape", c.shapes)
+			}
+			if got.Name() != c.wantName {
+				t.Errorf("Largest name = %q, want %q", got.Name(), c.wantName)
+			}
+			if area := got.Area(); math.Abs(area-c.wantArea) > 1e-9 {
+				t.Errorf("Largest area = %v, want %v", area, c.wantArea)
+			}
+		})
+	}
+}
+
+func TestLargestTiesAndZeroAreas(t *testing.T) {
+	// Ties are still a successful largest; only the area is pinned down.
+	got := Largest([]Shape{Square{2}, Square{2}})
+	if got == nil || math.Abs(got.Area()-4) > 1e-9 {
+		t.Fatalf("Largest(tie) = %v, want a shape with area 4", got)
+	}
+
+	got = Largest([]Shape{Square{}, Circle{}})
+	if got == nil {
+		t.Fatal("Largest of zero-area shapes returned nil; the slice is not empty")
+	}
+	if math.Abs(got.Area()) > 1e-9 {
+		t.Fatalf("Largest of zero-area shapes = %v, want area 0", got.Area())
+	}
+
+	shapes := []Shape{Square{2}, Circle{10}}
+	_ = Largest(shapes)
+	if shapes[0].Name() != "square" || shapes[1].Name() != "circle" {
+		t.Fatal("Largest reordered the input slice")
+	}
 }
 
 func TestDescribeAll(t *testing.T) {
 	got := DescribeAll([]Shape{Square{2}, Circle{Radius: 1}})
 	want := []string{"square: 4.00", "circle: 3.14"}
-	if len(got) != len(want) {
+	if !slices.Equal(got, want) {
 		t.Fatalf("DescribeAll = %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("DescribeAll = %v, want %v", got, want)
-		}
 	}
 	if len(DescribeAll(nil)) != 0 {
 		t.Error("DescribeAll(nil) should be empty")
+	}
+}
+
+func TestDescribeAllTable(t *testing.T) {
+	cases := []struct {
+		name   string
+		shapes []Shape
+		want   []string
+	}{
+		{"mixed", []Shape{Square{2}, Circle{1}}, []string{"square: 4.00", "circle: 3.14"}},
+		{"zero radius", []Shape{Circle{}}, []string{"circle: 0.00"}},
+		{"fractional", []Shape{Square{1.5}, Circle{2}}, []string{"square: 2.25", "circle: 12.57"}},
+		{"order preserved", []Shape{Square{1}, Circle{1}, Square{2}}, []string{"square: 1.00", "circle: 3.14", "square: 4.00"}},
+		{"empty slice", []Shape{}, []string{}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := DescribeAll(c.shapes)
+			if !slices.Equal(got, c.want) {
+				t.Errorf("DescribeAll = %v, want %v", got, c.want)
+			}
+		})
 	}
 }
 `,
@@ -1438,6 +1868,7 @@ func main() {
 
 import (
 	"fmt"
+	"math"
 	"testing"
 )
 
@@ -1449,10 +1880,13 @@ func TestString(t *testing.T) {
 		{21.5, "21.5°C (70.7°F)"},
 		{0, "0.0°C (32.0°F)"},
 		{100, "100.0°C (212.0°F)"},
+		{-40, "-40.0°C (-40.0°F)"},
+		{37, "37.0°C (98.6°F)"},
+		{-12.5, "-12.5°C (9.5°F)"},
 	}
 	for _, c := range cases {
 		if got := (Temperature{Celsius: c.c}).String(); got != c.want {
-			t.Errorf("String() = %q, want %q", got, c.want)
+			t.Errorf("String(%v) = %q, want %q", c.c, got, c.want)
 		}
 	}
 }
@@ -1462,14 +1896,29 @@ func TestFmtUsesStringer(t *testing.T) {
 	if got := fmt.Sprint(tv); got != "0.0°C (32.0°F)" {
 		t.Fatalf("fmt.Sprint = %q; is your String method on a value receiver?", got)
 	}
+
+	p := &Temperature{Celsius: 21.5}
+	if got := fmt.Sprint(p); got != "21.5°C (70.7°F)" {
+		t.Fatalf("fmt.Sprint(pointer) = %q, want the String method's output", got)
+	}
 }
 
 func TestFahrenheit(t *testing.T) {
-	if got := (Temperature{Celsius: 100}).Fahrenheit(); got != 212 {
-		t.Errorf("Fahrenheit = %v, want 212", got)
+	cases := []struct {
+		celsius float64
+		want    float64
+	}{
+		{100, 212},
+		{-40, -40},
+		{0, 32},
+		{37, 98.6},
+		{-12.5, 9.5},
 	}
-	if got := (Temperature{Celsius: -40}).Fahrenheit(); got != -40 {
-		t.Errorf("Fahrenheit = %v, want -40", got)
+	for _, c := range cases {
+		got := (Temperature{Celsius: c.celsius}).Fahrenheit()
+		if math.Abs(got-c.want) > 1e-9 {
+			t.Errorf("Fahrenheit(%v) = %v, want %v", c.celsius, got, c.want)
+		}
 	}
 }
 
@@ -1480,6 +1929,51 @@ func TestHottest(t *testing.T) {
 	}
 	if _, ok := Hottest(nil); ok {
 		t.Error("Hottest(nil) reported ok")
+	}
+	if _, ok := Hottest([]Temperature{}); ok {
+		t.Error("Hottest(empty) reported ok")
+	}
+}
+
+func TestHottestTable(t *testing.T) {
+	cases := []struct {
+		name string
+		ts   []Temperature
+		want float64
+	}{
+		{"single", []Temperature{{21.5}}, 21.5},
+		{"max first", []Temperature{{30}, {10}, {20}}, 30},
+		{"max last", []Temperature{{-5}, {0}, {10}}, 10},
+		{"all negative", []Temperature{{-20}, {-5}, {-10}}, -5},
+		{"duplicate maxima", []Temperature{{10}, {20}, {20}}, 20},
+		{"zero is not skipped", []Temperature{{-3}, {0}}, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := Hottest(c.ts)
+			if !ok {
+				t.Fatalf("Hottest(%v) reported ok=false", c.ts)
+			}
+			if got.Celsius != c.want {
+				t.Errorf("Hottest = %v, want %v", got.Celsius, c.want)
+			}
+		})
+	}
+
+	ts := []Temperature{{1}, {2}, {3}}
+	_, _ = Hottest(ts)
+	if len(ts) != 3 || ts[0].Celsius != 1 || ts[2].Celsius != 3 {
+		t.Error("Hottest reordered or changed the input slice")
+	}
+}
+
+func TestHottestEmptyReturnsZeroValue(t *testing.T) {
+	got, ok := Hottest(nil)
+	if ok {
+		t.Fatal("Hottest(nil) reported ok")
+	}
+	if got != (Temperature{}) {
+		t.Errorf("Hottest(nil) = %+v, want the zero Temperature", got)
 	}
 }
 `,
@@ -1629,7 +2123,19 @@ func main() {
 					Name: "processor_test.go",
 					Content: `package main
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
+
+var (
+	_ Processor = Card{}
+	_ Processor = BankTransfer{}
+	_ Processor = Fake{}
+	_ Processor = (*Card)(nil)
+	_ Processor = (*BankTransfer)(nil)
+	_ Processor = (*Fake)(nil)
+)
 
 func TestCardPay(t *testing.T) {
 	got, err := Card{Last4: "4242"}.Pay(1000)
@@ -1661,6 +2167,67 @@ func TestFakePay(t *testing.T) {
 	}
 }
 
+func TestPaymentTable(t *testing.T) {
+	cases := []struct {
+		name   string
+		p      Processor
+		amount int
+		want   string
+	}{
+		{"card", Card{Last4: "4242"}, 1000, "charged 1000 to card ****4242"},
+		{"card short last4", Card{Last4: "1"}, 1, "charged 1 to card ****1"},
+		{"bank", BankTransfer{IBAN: "NO93"}, 250, "transferred 250 to NO93"},
+		{"bank long iban", BankTransfer{IBAN: "GB33BUKB20201555555555"}, 7, "transferred 7 to GB33BUKB20201555555555"},
+		{"fake", Fake{}, 10, "paid 10"},
+		{"fake large", Fake{}, 999999, "paid 999999"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := c.p.Pay(c.amount)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != c.want {
+				t.Errorf("Pay(%d) = %q, want %q", c.amount, got, c.want)
+			}
+		})
+	}
+}
+
+func TestLabels(t *testing.T) {
+	cases := []struct {
+		p    Processor
+		want string
+	}{
+		{Card{Last4: "1"}, "card"},
+		{BankTransfer{IBAN: "2"}, "bank"},
+		{Fake{}, "fake"},
+		{&Card{Last4: "3"}, "card"},
+	}
+	for _, c := range cases {
+		if got := c.p.Label(); got != c.want {
+			t.Errorf("%T.Label() = %q, want %q", c.p, got, c.want)
+		}
+	}
+}
+
+func TestFakeFailure(t *testing.T) {
+	got, err := (Fake{Fail: true}).Pay(10)
+	if err == nil {
+		t.Fatal("Fake{Fail:true}.Pay should return an error")
+	}
+	if err.Error() == "" {
+		t.Error("the fake failure error should carry a message")
+	}
+	if got != "" {
+		t.Errorf("Fake{Fail:true}.Pay result = %q, want an empty result", got)
+	}
+
+	if _, err := (Fake{}).Pay(10); err != nil {
+		t.Errorf("Fake{Fail:false}.Pay = %v, want nil", err)
+	}
+}
+
 func TestCheckoutValidates(t *testing.T) {
 	for _, amount := range []int{0, -5} {
 		if _, err := Checkout(Card{Last4: "4242"}, amount); err == nil {
@@ -1669,9 +2236,58 @@ func TestCheckoutValidates(t *testing.T) {
 	}
 }
 
+type spyProcessor struct {
+	calls  int
+	result string
+	err    error
+}
+
+func (s *spyProcessor) Pay(amount int) (string, error) {
+	s.calls++
+	return s.result, s.err
+}
+
+func (s *spyProcessor) Label() string { return "spy" }
+
+func TestCheckoutRejectsBeforeCalling(t *testing.T) {
+	for _, amount := range []int{0, -1, -1000} {
+		sp := &spyProcessor{result: "should not happen"}
+		got, err := Checkout(sp, amount)
+		if err == nil {
+			t.Errorf("Checkout(amount=%d) returned nil error", amount)
+		}
+		if sp.calls != 0 {
+			t.Errorf("Checkout(amount=%d) called Pay %d times; validation must happen first", amount, sp.calls)
+		}
+		if got != "" {
+			t.Errorf("Checkout(amount=%d) result = %q, want empty on rejection", amount, got)
+		}
+	}
+}
+
+func TestCheckoutDelegates(t *testing.T) {
+	sp := &spyProcessor{result: "ok"}
+	got, err := Checkout(sp, 5)
+	if err != nil {
+		t.Fatalf("Checkout = %v", err)
+	}
+	if got != "ok" {
+		t.Errorf("Checkout = %q, want the processor result %q", got, "ok")
+	}
+	if sp.calls != 1 {
+		t.Errorf("Pay called %d times, want 1", sp.calls)
+	}
+}
+
 func TestCheckoutPropagatesErrors(t *testing.T) {
 	if _, err := Checkout(Fake{Fail: true}, 10); err == nil {
 		t.Fatal("Checkout swallowed the processor's error")
+	}
+
+	sentinel := errors.New("processor exploded")
+	sp := &spyProcessor{err: sentinel}
+	if _, err := Checkout(sp, 10); !errors.Is(err, sentinel) {
+		t.Errorf("Checkout error = %v, want the processor's error unchanged", err)
 	}
 }
 
@@ -1696,6 +2312,40 @@ func TestCheckoutAll(t *testing.T) {
 	}
 	if len(CheckoutAll(nil, 10)) != 0 {
 		t.Error("CheckoutAll(nil) should be empty")
+	}
+	if len(CheckoutAll([]Processor{}, 10)) != 0 {
+		t.Error("CheckoutAll(empty) should be empty")
+	}
+}
+
+func TestCheckoutAllPreservesOrder(t *testing.T) {
+	ps := []Processor{BankTransfer{IBAN: "B"}, Card{Last4: "C"}, Fake{}}
+	got := CheckoutAll(ps, 3)
+	want := []string{"transferred 3 to B", "charged 3 to card ****C", "paid 3"}
+	if len(got) != len(want) {
+		t.Fatalf("CheckoutAll = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("result %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestCheckoutAllRejectsEveryAmount(t *testing.T) {
+	sp1 := &spyProcessor{result: "should not happen"}
+	sp2 := &spyProcessor{result: "should not happen"}
+	got := CheckoutAll([]Processor{sp1, sp2}, 0)
+	if len(got) != 2 {
+		t.Fatalf("CheckoutAll = %v, want two error texts", got)
+	}
+	for i, s := range got {
+		if s == "" {
+			t.Errorf("result %d is empty; a rejected checkout should yield the error text", i)
+		}
+	}
+	if sp1.calls != 0 || sp2.calls != 0 {
+		t.Errorf("Pay was called %d and %d times; validation must happen first", sp1.calls, sp2.calls)
 	}
 }
 
@@ -2175,6 +2825,46 @@ func TestDivide(t *testing.T) {
 	}
 }
 
+func TestDivideTable(t *testing.T) {
+	cases := []struct {
+		name    string
+		a, b    float64
+		want    float64
+		wantErr bool
+	}{
+		{"exact", 10, 4, 2.5, false},
+		{"negative dividend", -9, 3, -3, false},
+		{"negative divisor", 10, -4, -2.5, false},
+		{"both negative", -10, -4, 2.5, false},
+		{"zero dividend", 0, 5, 0, false},
+		{"zero over negative", 0, -5, 0, false},
+		{"repeating fraction", 1, 3, 1.0 / 3.0, false},
+		{"zero divisor", 1, 0, 0, true},
+		{"zero over zero", 0, 0, 0, true},
+		{"negative over zero", -1, 0, 0, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := Divide(c.a, c.b)
+			if c.wantErr {
+				if !errors.Is(err, ErrDivideByZero) {
+					t.Fatalf("Divide(%v, %v) error = %v, want ErrDivideByZero", c.a, c.b, err)
+				}
+				if got != 0 {
+					t.Errorf("Divide(%v, %v) value = %v, want 0", c.a, c.b, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Divide(%v, %v) returned an error: %v", c.a, c.b, err)
+			}
+			if math.Abs(got-c.want) > 1e-9 {
+				t.Errorf("Divide(%v, %v) = %v, want %v", c.a, c.b, got, c.want)
+			}
+		})
+	}
+}
+
 func TestDivideByZero(t *testing.T) {
 	got, err := Divide(1, 0)
 	if !errors.Is(err, ErrDivideByZero) {
@@ -2183,12 +2873,28 @@ func TestDivideByZero(t *testing.T) {
 	if got != 0 {
 		t.Fatalf("Divide(1, 0) value = %v, want 0", got)
 	}
+	if err.Error() == "" {
+		t.Error("the sentinel error should have a message")
+	}
 }
 
 func TestDivideNegative(t *testing.T) {
 	got, err := Divide(-9, 3)
 	if err != nil || math.Abs(got+3) > 1e-9 {
 		t.Fatalf("Divide(-9, 3) = %v, %v; want -3, nil", got, err)
+	}
+}
+
+func TestDivideNilErrorOnSuccess(t *testing.T) {
+	got, err := Divide(1, 2)
+	if err != nil {
+		t.Fatalf("Divide(1, 2) error = %v, want nil", err)
+	}
+	if math.Abs(got-0.5) > 1e-9 {
+		t.Errorf("Divide(1, 2) = %v, want 0.5", got)
+	}
+	if errors.Is(err, ErrDivideByZero) {
+		t.Error("a successful division should not match the sentinel")
 	}
 }
 `,
@@ -2327,9 +3033,12 @@ func main() {
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
+
+var _ error = (*ValidationError)(nil)
 
 func TestAddValidation(t *testing.T) {
 	s := NewStore()
@@ -2353,6 +3062,62 @@ func TestAddValidation(t *testing.T) {
 	}
 }
 
+func TestAddValidationTable(t *testing.T) {
+	cases := []struct {
+		name  string
+		u     User
+		field string
+	}{
+		{"zero id", User{ID: 0, Name: "x"}, "id"},
+		{"negative id", User{ID: -3, Name: "x"}, "id"},
+		{"empty name", User{ID: 1, Name: ""}, "name"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := NewStore()
+			err := s.Add(c.u)
+			var ve *ValidationError
+			if !errors.As(err, &ve) {
+				t.Fatalf("Add(%+v) = %v, want a *ValidationError", c.u, err)
+			}
+			if ve.Field != c.field {
+				t.Errorf("Field = %q, want %q", ve.Field, c.field)
+			}
+			if want := fmt.Sprintf("invalid %s: %s", ve.Field, ve.Reason); err.Error() != want {
+				t.Errorf("Error() = %q, want %q", err.Error(), want)
+			}
+		})
+	}
+}
+
+func TestAddBothFieldsInvalid(t *testing.T) {
+	s := NewStore()
+	err := s.Add(User{})
+	var ve *ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("Add(zero User) = %v, want a *ValidationError", err)
+	}
+	if ve.Field != "id" && ve.Field != "name" {
+		t.Errorf("Field = %q, want either \"id\" or \"name\" when both are invalid", ve.Field)
+	}
+}
+
+func TestAddValidationDoesNotStore(t *testing.T) {
+	s := NewStore()
+	if err := s.Add(User{ID: 0, Name: "Ghost"}); err == nil {
+		t.Fatal("Add(id=0) succeeded")
+	}
+	if err := s.Add(User{ID: 5, Name: ""}); err == nil {
+		t.Fatal("Add(empty name) succeeded")
+	}
+	if _, err := s.Get(0); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Get(0) after a rejected Add = %v, want ErrNotFound", err)
+	}
+	if _, err := s.Get(5); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Get(5) after a rejected Add = %v, want ErrNotFound", err)
+	}
+}
+
 func TestValidationErrorMessage(t *testing.T) {
 	err := (&ValidationError{Field: "id", Reason: "must be positive"}).Error()
 	if err != "" && !strings.Contains(err, "id") {
@@ -2360,6 +3125,20 @@ func TestValidationErrorMessage(t *testing.T) {
 	}
 	if err != "" && !strings.Contains(err, "must be positive") {
 		t.Errorf("Error() = %q, should mention the reason", err)
+	}
+}
+
+func TestValidationErrorFormat(t *testing.T) {
+	cases := []*ValidationError{
+		{Field: "id", Reason: "must be positive"},
+		{Field: "name", Reason: "must not be empty"},
+		{Field: "", Reason: ""},
+	}
+	for _, ve := range cases {
+		want := fmt.Sprintf("invalid %s: %s", ve.Field, ve.Reason)
+		if got := ve.Error(); got != want {
+			t.Errorf("Error() = %q, want %q", got, want)
+		}
 	}
 }
 
@@ -2371,6 +3150,46 @@ func TestGetWrapsNotFound(t *testing.T) {
 	}
 	if err == ErrNotFound {
 		t.Fatal("the error should be wrapped with %w, not returned bare")
+	}
+	if !strings.Contains(err.Error(), "42") {
+		t.Errorf("Get(missing) error should mention the id: %v", err)
+	}
+	if !strings.Contains(err.Error(), ErrNotFound.Error()) {
+		t.Errorf("the wrapped error should include the sentinel text: %v", err)
+	}
+}
+
+func TestGetOnEmptyStore(t *testing.T) {
+	s := NewStore()
+	if s == nil {
+		t.Fatal("NewStore returned nil")
+	}
+	if _, err := s.Get(1); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Get on a new store = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeleteWrapsNotFound(t *testing.T) {
+	s := NewStore()
+	if err := s.Add(User{ID: 1, Name: "Ada"}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.Delete(99)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Delete(missing) = %v, want an error wrapping ErrNotFound", err)
+	}
+	if err == ErrNotFound {
+		t.Fatal("Delete should wrap the sentinel, not return it bare")
+	}
+	if !strings.Contains(err.Error(), "99") {
+		t.Errorf("Delete(missing) error should mention the id: %v", err)
+	}
+
+	// The failed delete must leave the store intact.
+	u, err := s.Get(1)
+	if err != nil || u.Name != "Ada" {
+		t.Errorf("a failed Delete disturbed the store: %+v, %v", u, err)
 	}
 }
 
@@ -2388,6 +3207,31 @@ func TestRoundTrip(t *testing.T) {
 	}
 	if err := s.Delete(7); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second Delete = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMultipleUsers(t *testing.T) {
+	s := NewStore()
+	users := []User{{ID: 1, Name: "Ada"}, {ID: 2, Name: "Bo"}, {ID: 3, Name: "Cy"}}
+	for _, u := range users {
+		if err := s.Add(u); err != nil {
+			t.Fatalf("Add(%+v) = %v", u, err)
+		}
+	}
+	for _, u := range users {
+		got, err := s.Get(u.ID)
+		if err != nil || got != u {
+			t.Errorf("Get(%d) = %+v, %v; want %+v", u.ID, got, err, u)
+		}
+	}
+	if err := s.Delete(2); err != nil {
+		t.Fatalf("Delete(2) = %v", err)
+	}
+	if _, err := s.Get(2); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Get(2) after Delete = %v, want ErrNotFound", err)
+	}
+	if u, err := s.Get(3); err != nil || u.Name != "Cy" {
+		t.Errorf("Delete(2) removed the wrong user: %+v, %v", u, err)
 	}
 }
 `,
@@ -2535,6 +3379,7 @@ func main() {
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -2561,6 +3406,73 @@ func TestParseAge(t *testing.T) {
 	}
 }
 
+func TestParseAgeTable(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    int
+		wantErr bool
+	}{
+		{"42", 42, false},
+		{"0", 0, false},
+		{"007", 7, false},
+		{"+5", 5, false},
+		{"-1", 0, true},
+		{"-100", 0, true},
+		{"banana", 0, true},
+		{"", 0, true},
+		{"1.5", 0, true},
+		{" 42", 0, true},
+	}
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			got, err := ParseAge(c.in)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("ParseAge(%q) = %d, nil; want an error", c.in, got)
+				}
+				if got != 0 {
+					t.Errorf("ParseAge(%q) value = %d, want 0 on error", c.in, got)
+				}
+				return
+			}
+			if err != nil || got != c.want {
+				t.Errorf("ParseAge(%q) = %d, %v; want %d, nil", c.in, got, err, c.want)
+			}
+		})
+	}
+}
+
+func TestParseAgeWrapsStrconvError(t *testing.T) {
+	for _, in := range []string{"banana", "x", "1.5"} {
+		_, err := ParseAge(in)
+		if err == nil {
+			t.Fatalf("ParseAge(%q) should fail", in)
+		}
+		var numErr *strconv.NumError
+		if !errors.As(err, &numErr) {
+			t.Errorf("ParseAge(%q) error = %v (%T); want the strconv error wrapped with %%w", in, err, err)
+			continue
+		}
+		if numErr.Num != in {
+			t.Errorf("wrapped NumError.Num = %q, want %q", numErr.Num, in)
+		}
+		if !strings.Contains(err.Error(), in) {
+			t.Errorf("the error should mention the input %q: %v", in, err)
+		}
+	}
+}
+
+func TestParseAgeNegativeIsOwnError(t *testing.T) {
+	_, err := ParseAge("-1")
+	if err == nil {
+		t.Fatal("ParseAge(\"-1\") should fail")
+	}
+	var numErr *strconv.NumError
+	if errors.As(err, &numErr) {
+		t.Error("a negative age should be rejected by your own error, not reported as a parse failure")
+	}
+}
+
 func TestSafeDivide(t *testing.T) {
 	got, err := SafeDivide(10, 2)
 	if err != nil || got != 5 {
@@ -2573,6 +3485,39 @@ func TestSafeDivide(t *testing.T) {
 	}
 	if got != 0 {
 		t.Errorf("SafeDivide(1, 0) value = %d, want 0", got)
+	}
+}
+
+func TestSafeDivideTable(t *testing.T) {
+	cases := []struct {
+		a, b    int
+		want    int
+		wantErr bool
+	}{
+		{10, 2, 5, false},
+		{7, 2, 3, false},
+		{-9, 3, -3, false},
+		{9, -3, -3, false},
+		{0, 5, 0, false},
+		{0, -5, 0, false},
+		{1, 0, 0, true},
+		{0, 0, 0, true},
+		{-1, 0, 0, true},
+	}
+	for _, c := range cases {
+		got, err := SafeDivide(c.a, c.b)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("SafeDivide(%d, %d) = %d, nil; want an error", c.a, c.b, got)
+			}
+			if got != 0 {
+				t.Errorf("SafeDivide(%d, %d) value = %d, want 0", c.a, c.b, got)
+			}
+			continue
+		}
+		if err != nil || got != c.want {
+			t.Errorf("SafeDivide(%d, %d) = %d, %v; want %d, nil", c.a, c.b, got, err, c.want)
+		}
 	}
 }
 
@@ -2594,6 +3539,53 @@ func TestSafeIndex(t *testing.T) {
 
 	if _, err := SafeIndex(nil, 0); err == nil {
 		t.Error("SafeIndex(nil, 0) should fail")
+	}
+}
+
+func TestSafeIndexBoundaries(t *testing.T) {
+	xs := []int{10, 20, 30}
+	cases := []struct {
+		name    string
+		xs      []int
+		i       int
+		want    int
+		wantErr bool
+	}{
+		{"first", xs, 0, 10, false},
+		{"middle", xs, 1, 20, false},
+		{"last", xs, 2, 30, false},
+		{"negative one", xs, -1, 0, true},
+		{"one past the end", xs, 3, 0, true},
+		{"far past the end", xs, 100, 0, true},
+		{"empty slice", []int{}, 0, 0, true},
+		{"nil slice", nil, 0, 0, true},
+		{"nil slice negative", nil, -1, 0, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := SafeIndex(c.xs, c.i)
+			if c.wantErr {
+				if err == nil {
+					t.Errorf("SafeIndex(_, %d) = %d, nil; want an error", c.i, got)
+				}
+				if got != 0 {
+					t.Errorf("SafeIndex(_, %d) value = %d, want 0", c.i, got)
+				}
+				return
+			}
+			if err != nil || got != c.want {
+				t.Errorf("SafeIndex(_, %d) = %d, %v; want %d, nil", c.i, got, err, c.want)
+			}
+		})
+	}
+}
+
+func TestRecoveredErrorsCarryMessages(t *testing.T) {
+	if _, err := SafeDivide(1, 0); err == nil || err.Error() == "" {
+		t.Errorf("SafeDivide error = %v, want a non-empty message", err)
+	}
+	if _, err := SafeIndex([]int{1}, 9); err == nil || err.Error() == "" {
+		t.Errorf("SafeIndex error = %v, want a non-empty message", err)
 	}
 }
 
@@ -2950,7 +3942,14 @@ func main() {
 					Name: "minmax_test.go",
 					Content: `package main
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
+
+type score int
+type label string
+type ratio float64
 
 func TestMinMaxInt(t *testing.T) {
 	if Min(3, 7) != 3 || Max(3, 7) != 7 {
@@ -2964,15 +3963,97 @@ func TestMinMaxInt(t *testing.T) {
 	}
 }
 
+func TestMinMaxTableInt(t *testing.T) {
+	cases := []struct {
+		a, b    int
+		min, max int
+	}{
+		{3, 7, 3, 7},
+		{7, 3, 3, 7},
+		{-1, -9, -9, -1},
+		{-5, 3, -5, 3},
+		{0, 0, 0, 0},
+		{0, -1, -1, 0},
+		{5, 5, 5, 5},
+	}
+	for _, c := range cases {
+		if got := Min(c.a, c.b); got != c.min {
+			t.Errorf("Min(%d, %d) = %d, want %d", c.a, c.b, got, c.min)
+		}
+		if got := Max(c.a, c.b); got != c.max {
+			t.Errorf("Max(%d, %d) = %d, want %d", c.a, c.b, got, c.max)
+		}
+	}
+}
+
 func TestMinMaxString(t *testing.T) {
 	if Min("b", "a") != "a" || Max("b", "a") != "b" {
 		t.Errorf("Min/Max(\"b\", \"a\") = %q/%q", Min("b", "a"), Max("b", "a"))
 	}
 }
 
+func TestMinMaxTableString(t *testing.T) {
+	cases := []struct {
+		a, b    string
+		min, max string
+	}{
+		{"b", "a", "a", "b"},
+		{"", "a", "", "a"},
+		{"a", "", "", "a"},
+		{"a", "a", "a", "a"},
+		{"apple", "banana", "apple", "banana"},
+		{"Z", "a", "Z", "a"},
+		{"", "", "", ""},
+	}
+	for _, c := range cases {
+		if got := Min(c.a, c.b); got != c.min {
+			t.Errorf("Min(%q, %q) = %q, want %q", c.a, c.b, got, c.min)
+		}
+		if got := Max(c.a, c.b); got != c.max {
+			t.Errorf("Max(%q, %q) = %q, want %q", c.a, c.b, got, c.max)
+		}
+	}
+}
+
 func TestMinMaxFloat(t *testing.T) {
 	if Min(1.5, 0.5) != 0.5 || Max(1.5, 0.5) != 1.5 {
 		t.Errorf("Min/Max(1.5, 0.5) = %v/%v", Min(1.5, 0.5), Max(1.5, 0.5))
+	}
+}
+
+func TestMinMaxTableFloat(t *testing.T) {
+	cases := []struct {
+		a, b    float64
+		min, max float64
+	}{
+		{1.5, 0.5, 0.5, 1.5},
+		{0.5, 1.5, 0.5, 1.5},
+		{-1.5, 2.5, -1.5, 2.5},
+		{0, 0, 0, 0},
+		{-0.25, -0.5, -0.5, -0.25},
+	}
+	for _, c := range cases {
+		if got := Min(c.a, c.b); math.Abs(got-c.min) > 1e-12 {
+			t.Errorf("Min(%v, %v) = %v, want %v", c.a, c.b, got, c.min)
+		}
+		if got := Max(c.a, c.b); math.Abs(got-c.max) > 1e-12 {
+			t.Errorf("Max(%v, %v) = %v, want %v", c.a, c.b, got, c.max)
+		}
+	}
+}
+
+func TestMinMaxNamedTypes(t *testing.T) {
+	if got := Min(score(3), score(9)); got != score(3) {
+		t.Errorf("Min(score) = %v, want 3", got)
+	}
+	if got := Max(score(-3), score(-9)); got != score(-3) {
+		t.Errorf("Max(score) = %v, want -3", got)
+	}
+	if got := Min(label("a"), label("b")); got != label("a") {
+		t.Errorf("Min(label) = %q, want \"a\"", got)
+	}
+	if got := Max(ratio(0.5), ratio(1.5)); got != ratio(1.5) {
+		t.Errorf("Max(ratio) = %v, want 1.5", got)
 	}
 }
 
@@ -2991,6 +4072,57 @@ func TestClamp(t *testing.T) {
 	}
 	if got := Clamp("A", "a", "z"); got != "a" {
 		t.Errorf("Clamp string low = %q, want \"a\"", got)
+	}
+}
+
+func TestClampTable(t *testing.T) {
+	cases := []struct {
+		value, low, high, want int
+	}{
+		{15, 0, 10, 10},
+		{-5, 0, 10, 0},
+		{5, 0, 10, 5},
+		{0, 0, 10, 0},
+		{10, 0, 10, 10},
+		{7, 7, 7, 7},
+		{-10, -5, 5, -5},
+		{10, -5, 5, 5},
+		{0, 0, 0, 0},
+	}
+	for _, c := range cases {
+		if got := Clamp(c.value, c.low, c.high); got != c.want {
+			t.Errorf("Clamp(%d, %d, %d) = %d, want %d", c.value, c.low, c.high, got, c.want)
+		}
+	}
+}
+
+func TestClampStringBoundaries(t *testing.T) {
+	cases := []struct {
+		value, low, high, want string
+	}{
+		{"m", "a", "z", "m"},
+		{"A", "a", "z", "a"},
+		{"zz", "a", "z", "z"},
+		{"a", "a", "z", "a"},
+		{"z", "a", "z", "z"},
+		{"q", "q", "q", "q"},
+	}
+	for _, c := range cases {
+		if got := Clamp(c.value, c.low, c.high); got != c.want {
+			t.Errorf("Clamp(%q, %q, %q) = %q, want %q", c.value, c.low, c.high, got, c.want)
+		}
+	}
+}
+
+func TestClampFloat(t *testing.T) {
+	if got := Clamp(2.5, 1.5, 2.5); got != 2.5 {
+		t.Errorf("Clamp(2.5, 1.5, 2.5) = %v, want 2.5", got)
+	}
+	if got := Clamp(-2.5, -1.5, 1.5); got != -1.5 {
+		t.Errorf("Clamp(-2.5, -1.5, 1.5) = %v, want -1.5", got)
+	}
+	if got := Clamp(score(42), score(0), score(10)); got != score(10) {
+		t.Errorf("Clamp(score) = %v, want 10", got)
 	}
 }
 `,
@@ -3105,6 +4237,7 @@ import (
 )
 
 type Celsius float64
+type Count int
 
 func TestMap(t *testing.T) {
 	got := Map([]int{1, 2, 3}, func(n int) int { return n * 10 })
@@ -3123,6 +4256,50 @@ func TestMap(t *testing.T) {
 	}
 }
 
+func TestMapTable(t *testing.T) {
+	cases := []struct {
+		name string
+		xs   []int
+		f    func(int) int
+		want []int
+	}{
+		{"identity", []int{3, 1, 2}, func(n int) int { return n }, []int{3, 1, 2}},
+		{"order preserved", []int{3, 1, 2}, func(n int) int { return n * 10 }, []int{30, 10, 20}},
+		{"negatives", []int{-1, 0, 1}, func(n int) int { return -n }, []int{1, 0, -1}},
+		{"duplicates", []int{2, 2, 2}, func(n int) int { return n + 1 }, []int{3, 3, 3}},
+		{"constant", []int{1, 2, 3}, func(int) int { return 7 }, []int{7, 7, 7}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := Map(c.xs, c.f); !slices.Equal(got, c.want) {
+				t.Errorf("Map = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestMapChangesTypeAndInputUntouched(t *testing.T) {
+	got := Map([]int{1, 2, 3}, func(n int) float64 { return float64(n) / 2 })
+	if !slices.Equal(got, []float64{0.5, 1, 1.5}) {
+		t.Errorf("Map to float64 = %v", got)
+	}
+
+	lens := Map([]string{"a", "", "bbb"}, func(s string) int { return len(s) })
+	if !slices.Equal(lens, []int{1, 0, 3}) {
+		t.Errorf("Map string lengths = %v", lens)
+	}
+
+	xs := []int{1, 2, 3}
+	_ = Map(xs, func(n int) int { return n * 100 })
+	if !slices.Equal(xs, []int{1, 2, 3}) {
+		t.Errorf("Map changed its input: %v", xs)
+	}
+
+	if got := Map([]int{}, func(n int) int { return n }); got == nil || len(got) != 0 {
+		t.Errorf("Map(empty) = %v, want an empty non-nil slice", got)
+	}
+}
+
 func TestFilter(t *testing.T) {
 	if got := Filter([]int{1, 2, 3, 4}, func(n int) bool { return n%2 == 0 }); !slices.Equal(got, []int{2, 4}) {
 		t.Fatalf("Filter = %v", got)
@@ -3132,6 +4309,41 @@ func TestFilter(t *testing.T) {
 	}
 	if got := Filter[int](nil, func(int) bool { return true }); got == nil || len(got) != 0 {
 		t.Fatalf("Filter(nil) = %v, want an empty non-nil slice", got)
+	}
+}
+
+func TestFilterTable(t *testing.T) {
+	cases := []struct {
+		name string
+		xs   []int
+		keep func(int) bool
+		want []int
+	}{
+		{"keep all", []int{1, 2, 3}, func(int) bool { return true }, []int{1, 2, 3}},
+		{"keep none", []int{1, 2, 3}, func(int) bool { return false }, []int{}},
+		{"evens", []int{2, 4, 5, 6}, func(n int) bool { return n%2 == 0 }, []int{2, 4, 6}},
+		{"order and duplicates", []int{1, 2, 2, 3}, func(n int) bool { return n == 2 }, []int{2, 2}},
+		{"negatives", []int{-3, -1, 0, 2}, func(n int) bool { return n < 0 }, []int{-3, -1}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := Filter(c.xs, c.keep)
+			if !slices.Equal(got, c.want) {
+				t.Errorf("Filter = %v, want %v", got, c.want)
+			}
+			if len(c.want) == 0 && got == nil {
+				t.Error("Filter should return a non-nil slice when nothing is kept")
+			}
+		})
+	}
+}
+
+func TestFilterEmptyInputs(t *testing.T) {
+	if got := Filter([]int{}, func(int) bool { return true }); got == nil || len(got) != 0 {
+		t.Errorf("Filter(empty) = %v, want an empty non-nil slice", got)
+	}
+	if got := Filter([]string{}, func(string) bool { return true }); got == nil || len(got) != 0 {
+		t.Errorf("Filter(empty strings) = %v, want an empty non-nil slice", got)
 	}
 }
 
@@ -3151,6 +4363,47 @@ func TestSum(t *testing.T) {
 	}
 }
 
+func TestSumTable(t *testing.T) {
+	cases := []struct {
+		name string
+		xs   []int
+		want int
+	}{
+		{"positive", []int{1, 2, 3}, 6},
+		{"mixed signs", []int{5, -3, 2}, 4},
+		{"all negative", []int{-1, -2, -3}, -6},
+		{"single", []int{42}, 42},
+		{"with zero", []int{0, 0, 9}, 9},
+		{"empty", []int{}, 0},
+		{"large", []int{1000000, 2000000}, 3000000},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := Sum(c.xs); got != c.want {
+				t.Errorf("Sum(%v) = %d, want %d", c.xs, got, c.want)
+			}
+		})
+	}
+}
+
+func TestSumNamedAndFloat(t *testing.T) {
+	if got := Sum([]Count{1, 2, 3}); got != 6 {
+		t.Errorf("Sum(Count) = %v, want 6", got)
+	}
+	if got := Sum([]Celsius{-1.5, 1.5}); got != 0 {
+		t.Errorf("Sum(Celsius mixed) = %v, want 0", got)
+	}
+	if got := Sum([]float64{}); got != 0 {
+		t.Errorf("Sum(empty float64) = %v, want 0", got)
+	}
+	if got := Sum([]float64{-1.5, -2.5}); got != -4 {
+		t.Errorf("Sum(negative float64) = %v, want -4", got)
+	}
+	if got := Sum([]Count{}); got != 0 {
+		t.Errorf("Sum(empty Count) = %v, want 0", got)
+	}
+}
+
 func TestKeys(t *testing.T) {
 	got := Keys(map[string]int{"b": 1, "a": 2, "c": 3})
 	slices.Sort(got)
@@ -3159,6 +4412,30 @@ func TestKeys(t *testing.T) {
 	}
 	if got := Keys(map[int]string{}); len(got) != 0 {
 		t.Fatalf("Keys(empty) = %v", got)
+	}
+}
+
+func TestKeysTable(t *testing.T) {
+	one := Keys(map[string]int{"only": 1})
+	if !slices.Equal(one, []string{"only"}) {
+		t.Errorf("Keys(single) = %v, want [only]", one)
+	}
+
+	ints := Keys(map[int]string{3: "c", 1: "a", 2: "b"})
+	slices.Sort(ints)
+	if !slices.Equal(ints, []int{1, 2, 3}) {
+		t.Errorf("Keys(int keys) = %v, want [1 2 3]", ints)
+	}
+
+	bools := Keys(map[string]bool{"x": true, "y": false})
+	slices.Sort(bools)
+	if !slices.Equal(bools, []string{"x", "y"}) {
+		t.Errorf("Keys(bool values) = %v, want [x y]", bools)
+	}
+
+	var nilMap map[string]int
+	if got := Keys(nilMap); len(got) != 0 {
+		t.Errorf("Keys(nil map) = %v, want empty", got)
 	}
 }
 `,
@@ -3327,7 +4604,11 @@ func main() {
 					Name: "stack_test.go",
 					Content: `package main
 
-import "testing"
+import (
+	"fmt"
+	"reflect"
+	"testing"
+)
 
 func TestStack(t *testing.T) {
 	s := NewStack[string]()
@@ -3364,6 +4645,31 @@ func TestStack(t *testing.T) {
 }
 
 func TestStackZeroValue(t *testing.T) {
+	var s Stack[int]
+	if s.Len() != 0 {
+		t.Fatalf("Len of a zero-value Stack = %d, want 0", s.Len())
+	}
+	if _, ok := s.Pop(); ok {
+		t.Fatal("Pop on a zero-value Stack reported ok")
+	}
+
+	s.Push(1)
+	s.Push(2)
+	if s.Len() != 2 {
+		t.Fatalf("Len = %d, want 2", s.Len())
+	}
+	if v, ok := s.Peek(); !ok || v != 2 {
+		t.Fatalf("Peek = %d, %v; want 2, true", v, ok)
+	}
+	if v, ok := s.Pop(); !ok || v != 2 {
+		t.Fatalf("Pop = %d, %v; want 2, true", v, ok)
+	}
+	if v, ok := s.Pop(); !ok || v != 1 {
+		t.Fatalf("Pop = %d, %v; want 1, true", v, ok)
+	}
+}
+
+func TestStackZeroValueReceiver(t *testing.T) {
 	var s *Stack[int]
 	if s.Len() != 0 {
 		t.Fatal("Len on a nil stack should be 0")
@@ -3394,6 +4700,54 @@ func TestStackOfInts(t *testing.T) {
 	}
 }
 
+func TestStackLIFO(t *testing.T) {
+	s := NewStack[string]()
+	values := []string{"first", "second", "third"}
+	for _, v := range values {
+		s.Push(v)
+	}
+	for i := len(values) - 1; i >= 0; i-- {
+		v, ok := s.Pop()
+		if !ok || v != values[i] {
+			t.Fatalf("Pop = %q, %v; want %q, true", v, ok, values[i])
+		}
+	}
+	if _, ok := s.Pop(); ok {
+		t.Fatal("Pop on a drained stack reported ok")
+	}
+	if s.Len() != 0 {
+		t.Fatalf("Len after draining = %d, want 0", s.Len())
+	}
+}
+
+func TestStackPushAfterDrain(t *testing.T) {
+	s := NewStack[float64]()
+	s.Push(1.5)
+	if v, ok := s.Pop(); !ok || v != 1.5 {
+		t.Fatalf("Pop = %v, %v; want 1.5, true", v, ok)
+	}
+	s.Push(2.5)
+	if v, ok := s.Peek(); !ok || v != 2.5 {
+		t.Fatalf("Peek after re-push = %v, %v; want 2.5, true", v, ok)
+	}
+	if s.Len() != 1 {
+		t.Fatalf("Len = %d, want 1", s.Len())
+	}
+}
+
+func TestStackPeekIsStable(t *testing.T) {
+	s := NewStack[int]()
+	s.Push(7)
+	for i := 0; i < 3; i++ {
+		if v, ok := s.Peek(); !ok || v != 7 {
+			t.Fatalf("Peek %d = %d, %v; want 7, true", i, v, ok)
+		}
+	}
+	if s.Len() != 1 {
+		t.Fatalf("repeated Peek changed the length: %d", s.Len())
+	}
+}
+
 func TestPair(t *testing.T) {
 	p := NewPair("a", 1)
 	if p.Key != "a" || p.Value != 1 {
@@ -3404,6 +4758,43 @@ func TestPair(t *testing.T) {
 	}
 	if got := p.String(); len(got) < 5 || got[0] != '(' {
 		t.Errorf("Pair.String() = %q, expected something like \"(a => 1)\"", got)
+	}
+}
+
+func TestPairString(t *testing.T) {
+	cases := []struct {
+		p    Pair[string, int]
+		want string
+	}{
+		{NewPair("a", 1), "(a => 1)"},
+		{NewPair("", 0), "( => 0)"},
+		{NewPair("key", -3), "(key => -3)"},
+		{Pair[string, int]{Key: "k", Value: 99}, "(k => 99)"},
+	}
+	for _, c := range cases {
+		if got := c.p.String(); got != c.want {
+			t.Errorf("Pair.String() = %q, want %q", got, c.want)
+		}
+	}
+
+	if got := NewPair(1, "x").String(); got != "(1 => x)" {
+		t.Errorf("int-key Pair.String() = %q, want \"(1 => x)\"", got)
+	}
+	if got := NewPair(3.5, true).String(); got != "(3.5 => true)" {
+		t.Errorf("Pair.String() = %q, want \"(3.5 => true)\"", got)
+	}
+	if got := (Pair[string, []int]{Key: "k", Value: []int{1, 2}}).String(); got != "(k => [1 2])" {
+		t.Errorf("Pair.String() = %q, want \"(k => [1 2])\"", got)
+	}
+}
+
+func TestPairFmtUsesStringer(t *testing.T) {
+	p := NewPair("a", 1)
+	if got := fmt.Sprint(p); got != "(a => 1)" {
+		t.Errorf("fmt.Sprint = %q, want the String method's output", got)
+	}
+	if got := fmt.Sprint(&p); got != "(a => 1)" {
+		t.Errorf("fmt.Sprint(pointer) = %q, want the String method's output", got)
 	}
 }
 
@@ -3421,6 +4812,34 @@ func TestToMap(t *testing.T) {
 
 	if len(ToMap[string, int](nil)) != 0 {
 		t.Error("ToMap(nil) should be empty")
+	}
+}
+
+func TestToMapTable(t *testing.T) {
+	cases := []struct {
+		name  string
+		pairs []Pair[string, int]
+		want  map[string]int
+	}{
+		{"single", []Pair[string, int]{NewPair("a", 1)}, map[string]int{"a": 1}},
+		{"distinct", []Pair[string, int]{NewPair("a", 1), NewPair("b", 2), NewPair("c", 3)}, map[string]int{"a": 1, "b": 2, "c": 3}},
+		{"last duplicate wins", []Pair[string, int]{NewPair("a", 1), NewPair("b", 2), NewPair("a", 3)}, map[string]int{"a": 3, "b": 2}},
+		{"triple duplicate", []Pair[string, int]{NewPair("a", 1), NewPair("a", 2), NewPair("a", 3)}, map[string]int{"a": 3}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := ToMap(c.pairs); !reflect.DeepEqual(got, c.want) {
+				t.Errorf("ToMap = %v, want %v", got, c.want)
+			}
+		})
+	}
+
+	byID := ToMap([]Pair[int, string]{NewPair(1, "a"), NewPair(2, "b")})
+	if !reflect.DeepEqual(byID, map[int]string{1: "a", 2: "b"}) {
+		t.Errorf("ToMap(int keys) = %v", byID)
+	}
+	if len(ToMap([]Pair[string, int]{})) != 0 {
+		t.Error("ToMap(empty) should be empty")
 	}
 }
 `,

@@ -73,7 +73,7 @@ for {
 §for { }§ is an infinite loop. You leave it with §break§, §return§, or by making the
 program exit. A server usually has one of these at the bottom of §main§.
 
-Try removing the §break§ in the editor and pressing **Run**: our sandbox kills the
+Try removing the §break§ in the editor and pressing **Run program**: our sandbox kills the
 program after a few seconds and tells you it timed out instead of hanging forever.
 
 ## Shape 4: range — visiting a collection
@@ -311,10 +311,37 @@ func main() {
 import "testing"
 
 func TestSumTo(t *testing.T) {
-	cases := map[int]int{0: 0, 1: 1, 5: 15, 10: 55, 100: 5050, -3: 0}
-	for n, want := range cases {
-		if got := SumTo(n); got != want {
-			t.Errorf("SumTo(%d) = %d, want %d", n, got, want)
+	cases := []struct {
+		n, want int
+	}{
+		{0, 0},
+		{1, 1},
+		{2, 3},
+		{3, 6},
+		{4, 10},
+		{5, 15},
+		{10, 55},
+		{50, 1275},
+		{100, 5050},
+		{200, 20100},
+		{1000, 500500},
+		{10000, 50005000},
+		{-1, 0},
+		{-3, 0},
+		{-100, 0},
+	}
+	for _, c := range cases {
+		if got := SumTo(c.n); got != c.want {
+			t.Errorf("SumTo(%d) = %d, want %d", c.n, got, c.want)
+		}
+	}
+}
+
+func TestSumToRepeatedCalls(t *testing.T) {
+	// A stray accumulator declared outside the function would show up here.
+	for i := 0; i < 3; i++ {
+		if got := SumTo(5); got != 15 {
+			t.Fatalf("call %d: SumTo(5) = %d, want 15", i+1, got)
 		}
 	}
 }
@@ -391,14 +418,42 @@ func main() {
 import "testing"
 
 func TestFizzBuzz(t *testing.T) {
-	cases := map[int]string{
-		1: "1", 2: "2", 3: "Fizz", 4: "4", 5: "Buzz",
-		9: "Fizz", 10: "Buzz", 14: "14", 15: "FizzBuzz", 30: "FizzBuzz",
-		45: "FizzBuzz", 100: "Buzz", 101: "101",
+	cases := []struct {
+		n    int
+		want string
+	}{
+		{1, "1"},
+		{2, "2"},
+		{3, "Fizz"},
+		{4, "4"},
+		{5, "Buzz"},
+		{6, "Fizz"},
+		{7, "7"},
+		{9, "Fizz"},
+		{10, "Buzz"},
+		{12, "Fizz"},
+		{14, "14"},
+		{15, "FizzBuzz"},
+		{20, "Buzz"},
+		{21, "Fizz"},
+		{25, "Buzz"},
+		{30, "FizzBuzz"},
+		{33, "Fizz"},
+		{45, "FizzBuzz"},
+		{60, "FizzBuzz"},
+		{75, "FizzBuzz"},
+		{99, "Fizz"},
+		{100, "Buzz"},
+		{101, "101"},
+		{150, "FizzBuzz"},
+		{999, "Fizz"},
+		{1000, "Buzz"},
+		{1001, "1001"},
+		{1500, "FizzBuzz"},
 	}
-	for n, want := range cases {
-		if got := FizzBuzz(n); got != want {
-			t.Errorf("FizzBuzz(%d) = %q, want %q", n, got, want)
+	for _, c := range cases {
+		if got := FizzBuzz(c.n); got != c.want {
+			t.Errorf("FizzBuzz(%d) = %q, want %q", c.n, got, c.want)
 		}
 	}
 }
@@ -482,13 +537,13 @@ func main() {
 import "testing"
 
 func TestIsPrime(t *testing.T) {
-	primes := []int{2, 3, 5, 7, 11, 13, 97, 7919}
+	primes := []int{2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 97, 997, 1009, 7919, 104729}
 	for _, n := range primes {
 		if !IsPrime(n) {
 			t.Errorf("IsPrime(%d) = false, want true", n)
 		}
 	}
-	composites := []int{-7, 0, 1, 4, 9, 25, 100, 7920}
+	composites := []int{-104729, -97, -7, -2, -1, 0, 1, 4, 6, 8, 9, 10, 15, 21, 25, 27, 49, 81, 91, 100, 121, 169, 7920, 7921, 104730}
 	for _, n := range composites {
 		if IsPrime(n) {
 			t.Errorf("IsPrime(%d) = true, want false", n)
@@ -497,10 +552,26 @@ func TestIsPrime(t *testing.T) {
 }
 
 func TestCountPrimes(t *testing.T) {
-	cases := map[int]int{1: 0, 2: 1, 10: 4, 100: 25, 1000: 168}
-	for limit, want := range cases {
-		if got := CountPrimes(limit); got != want {
-			t.Errorf("CountPrimes(%d) = %d, want %d", limit, got, want)
+	cases := []struct {
+		limit, want int
+	}{
+		{-100, 0},
+		{0, 0},
+		{1, 0},
+		{2, 1},
+		{3, 2},
+		{5, 3},
+		{10, 4},
+		{11, 5},
+		{30, 10},
+		{97, 25},
+		{100, 25},
+		{1000, 168},
+		{10000, 1229},
+	}
+	for _, c := range cases {
+		if got := CountPrimes(c.limit); got != c.want {
+			t.Errorf("CountPrimes(%d) = %d, want %d", c.limit, got, c.want)
 		}
 	}
 }
@@ -865,6 +936,17 @@ func TestDivMod(t *testing.T) {
 		{3, 7, 0, 3},
 		{0, 4, 0, 0},
 		{100, 10, 10, 0},
+		{1, 1, 1, 0},
+		{2, 1, 2, 0},
+		{5, 3, 1, 2},
+		{1000000, 7, 142857, 1},
+		{-17, 5, -3, -2},
+		{17, -5, -3, 2},
+		{-17, -5, 3, -2},
+		{-1, 5, 0, -1},
+		{1, -5, 0, 1},
+		{-100, 10, -10, 0},
+		{100, -10, -10, 0},
 	}
 	for _, c := range cases {
 		q, r := DivMod(c.a, c.b)
@@ -944,11 +1026,30 @@ func TestMinMax(t *testing.T) {
 		{[]int{-3, -9, -1}, -9, -1, true},
 		{[]int{0, 0}, 0, 0, true},
 		{nil, 0, 0, false},
+		{[]int{}, 0, 0, false},
+		{[]int{2, 2, 2, 2}, 2, 2, true},
+		{[]int{5, 4, 3, 2, 1}, 1, 5, true},
+		{[]int{1, 2, 3, 4, 5}, 1, 5, true},
+		{[]int{9, -4, 0, -4, 12, 9}, -4, 12, true},
+		{[]int{-1, 0, 1}, -1, 1, true},
+		{[]int{1000000, -1000000, 0}, -1000000, 1000000, true},
+		{[]int{-2147483648, 2147483647}, -2147483648, 2147483647, true},
 	}
 	for _, c := range cases {
 		min, max, ok := MinMax(c.nums...)
 		if min != c.min || max != c.max || ok != c.ok {
 			t.Errorf("MinMax(%v) = %d, %d, %v; want %d, %d, %v", c.nums, min, max, ok, c.min, c.max, c.ok)
+		}
+	}
+}
+
+func TestMinMaxDoesNotModifyInput(t *testing.T) {
+	nums := []int{5, 2, 9, 1}
+	want := []int{5, 2, 9, 1}
+	MinMax(nums...)
+	for i := range want {
+		if nums[i] != want[i] {
+			t.Fatalf("MinMax modified its input: got %v, want %v", nums, want)
 		}
 	}
 }
@@ -1045,6 +1146,12 @@ func TestAverage(t *testing.T) {
 		{[]float64{0, 0}, 0},
 		{[]float64{-2, 2}, 0},
 		{[]float64{1, 2}, 1.5},
+		{[]float64{2, 4, 6, 8}, 5},
+		{[]float64{10}, 10},
+		{[]float64{-1, -2, -3}, -2},
+		{[]float64{-1.5, -2.5}, -2},
+		{[]float64{0.1, 0.2, 0.3}, 0.2},
+		{[]float64{1e9, 2e9, 3e9}, 2e9},
 	}
 	for _, c := range cases {
 		got, err := Average(c.nums...)
@@ -1059,12 +1166,17 @@ func TestAverage(t *testing.T) {
 }
 
 func TestAverageEmpty(t *testing.T) {
-	got, err := Average()
-	if err == nil {
-		t.Fatal("Average() should return an error for empty input")
-	}
-	if got != 0 {
-		t.Errorf("Average() value = %v, want 0 alongside the error", got)
+	for _, nums := range [][]float64{nil, {}} {
+		got, err := Average(nums...)
+		if err == nil {
+			t.Fatal("Average() should return an error for empty input")
+		}
+		if got != 0 {
+			t.Errorf("Average() value = %v, want 0 alongside the error", got)
+		}
+		if err.Error() != "average of no numbers" {
+			t.Errorf("Average() error = %q, want %q", err.Error(), "average of no numbers")
+		}
 	}
 }
 `,
@@ -1462,6 +1574,13 @@ import "testing"
 func TestApplyTwice(t *testing.T) {
 	double := func(n int) int { return n * 2 }
 	inc := func(n int) int { return n + 1 }
+	half := func(n int) int { return n / 2 }
+	identity := func(n int) int { return n }
+	square := func(n int) int { return n * n }
+	negate := func(n int) int { return -n }
+	minus3 := func(n int) int { return n - 3 }
+	plus10 := func(n int) int { return n + 10 }
+	constant := func(n int) int { return 7 }
 
 	cases := []struct {
 		x    int
@@ -1471,13 +1590,38 @@ func TestApplyTwice(t *testing.T) {
 		{3, double, 12},
 		{0, double, 0},
 		{-2, double, -8},
+		{1, double, 4},
 		{3, inc, 5},
-		{10, func(n int) int { return n / 2 }, 2},
+		{10, half, 2},
+		{-10, half, -2},
+		{7, identity, 7},
+		{-7, identity, -7},
+		{3, square, 81},
+		{2, negate, 2},
+		{-4, negate, -4},
+		{10, minus3, 4},
+		{0, plus10, 20},
+		{7, constant, 7},
+		{1000000, inc, 1000002},
 	}
 	for _, c := range cases {
 		if got := ApplyTwice(c.x, c.f); got != c.want {
 			t.Errorf("ApplyTwice(%d, f) = %d, want %d", c.x, got, c.want)
 		}
+	}
+}
+
+func TestApplyTwiceCallsFunctionTwice(t *testing.T) {
+	calls := 0
+	f := func(n int) int {
+		calls++
+		return n + 1
+	}
+	if got := ApplyTwice(10, f); got != 12 {
+		t.Fatalf("ApplyTwice(10, f) = %d, want 12", got)
+	}
+	if calls != 2 {
+		t.Fatalf("f was called %d times, want exactly 2", calls)
 	}
 }
 `,
@@ -1572,6 +1716,50 @@ func TestCounterFromZero(t *testing.T) {
 	next := NewCounter(0)
 	if got := next(); got != 1 {
 		t.Errorf("first call = %d, want 1", got)
+	}
+}
+
+func TestCounterStartValues(t *testing.T) {
+	cases := []struct {
+		start int
+		want  []int
+	}{
+		{0, []int{1, 2, 3}},
+		{-5, []int{-4, -3, -2}},
+		{41, []int{42}},
+		{1000000, []int{1000001, 1000002}},
+	}
+	for _, c := range cases {
+		next := NewCounter(c.start)
+		for i, want := range c.want {
+			if got := next(); got != want {
+				t.Errorf("NewCounter(%d) call %d = %d, want %d", c.start, i+1, got, want)
+			}
+		}
+	}
+}
+
+func TestCounterManyCalls(t *testing.T) {
+	next := NewCounter(41)
+	for i := 1; i <= 100; i++ {
+		want := 41 + i
+		if got := next(); got != want {
+			t.Fatalf("call %d = %d, want %d", i, got, want)
+		}
+	}
+}
+
+func TestCountersFromSameStartAreIndependent(t *testing.T) {
+	a := NewCounter(0)
+	b := NewCounter(0)
+	if got := a(); got != 1 {
+		t.Fatalf("a() = %d, want 1", got)
+	}
+	if got := a(); got != 2 {
+		t.Fatalf("a() = %d, want 2", got)
+	}
+	if got := b(); got != 1 {
+		t.Fatalf("b() = %d, want 1 (it must not see a's calls)", got)
 	}
 }
 `,
@@ -1709,11 +1897,84 @@ func TestMemoizeIsIndependentPerWrapper(t *testing.T) {
 	}
 }
 
+func TestMemoizeCachesZeroAndNegative(t *testing.T) {
+	calls := 0
+	m := Memoize(func(n int) int {
+		calls++
+		return n * 10
+	})
+	cases := []struct {
+		n    int
+		want int
+	}{
+		{0, 0},
+		{0, 0},
+		{-3, -30},
+		{-3, -30},
+		{0, 0},
+	}
+	for i, c := range cases {
+		if got := m(c.n); got != c.want {
+			t.Fatalf("call %d: m(%d) = %d, want %d", i+1, c.n, got, c.want)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("f was called %d times, want 2 (one per distinct argument)", calls)
+	}
+}
+
+func TestMemoizeCachesZeroResult(t *testing.T) {
+	// A cache lookup must use the map's ok result, not "the value is non-zero".
+	calls := 0
+	m := Memoize(func(n int) int {
+		calls++
+		return 0
+	})
+	for i := 0; i < 3; i++ {
+		if got := m(9); got != 0 {
+			t.Fatalf("call %d: m(9) = %d, want 0", i+1, got)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("f was called %d times, want 1", calls)
+	}
+}
+
+func TestMemoizeDistinctArguments(t *testing.T) {
+	calls := 0
+	m := Memoize(func(n int) int {
+		calls++
+		return n + 100
+	})
+	inputs := []int{5, 4, 5, 4, 5, 6, 6, 4}
+	for _, n := range inputs {
+		if got := m(n); got != n+100 {
+			t.Fatalf("m(%d) = %d, want %d", n, got, n+100)
+		}
+	}
+	if calls != 3 {
+		t.Fatalf("f was called %d times, want 3 (one per distinct argument)", calls)
+	}
+}
+
 func TestDeferOrder(t *testing.T) {
 	got := DeferOrder()
 	want := []string{"third", "second", "first"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("DeferOrder() = %v, want %v", got, want)
+	}
+}
+
+func TestDeferOrderRepeated(t *testing.T) {
+	want := []string{"third", "second", "first"}
+	for i := 0; i < 3; i++ {
+		got := DeferOrder()
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("call %d: DeferOrder() = %v, want %v", i+1, got, want)
+		}
+		if len(got) != 3 {
+			t.Fatalf("call %d: DeferOrder() returned %d entries, want 3", i+1, len(got))
+		}
 	}
 }
 `,
@@ -2077,34 +2338,77 @@ func main() {
 import "testing"
 
 func TestIncrement(t *testing.T) {
-	x := 41
-	Increment(&x)
-	if x != 42 {
-		t.Fatalf("Increment: got %d, want 42", x)
+	cases := []struct{ in, want int }{
+		{41, 42},
+		{0, 1},
+		{-1, 0},
+		{-100, -99},
+		{1000, 1001},
+	}
+	for _, c := range cases {
+		x := c.in
+		Increment(&x)
+		if x != c.want {
+			t.Errorf("Increment(&%d): got %d, want %d", c.in, x, c.want)
+		}
 	}
 	Increment(nil) // must not panic
 }
 
-func TestSwap(t *testing.T) {
-	a, b := 1, 2
-	Swap(&a, &b)
-	if a != 2 || b != 1 {
-		t.Fatalf("Swap: got a=%d b=%d, want a=2 b=1", a, b)
+func TestIncrementRepeated(t *testing.T) {
+	x := 0
+	for i := 0; i < 10; i++ {
+		Increment(&x)
 	}
+	if x != 10 {
+		t.Fatalf("after 10 increments: got %d, want 10", x)
+	}
+}
+
+func TestSwap(t *testing.T) {
+	cases := []struct{ a, b, wantA, wantB int }{
+		{1, 2, 2, 1},
+		{-1, 1, 1, -1},
+		{0, 0, 0, 0},
+		{5, 5, 5, 5},
+		{-7, -2, -2, -7},
+		{100, -100, -100, 100},
+	}
+	for _, c := range cases {
+		a, b := c.a, c.b
+		Swap(&a, &b)
+		if a != c.wantA || b != c.wantB {
+			t.Errorf("Swap(%d, %d): got a=%d b=%d, want a=%d b=%d", c.a, c.b, a, b, c.wantA, c.wantB)
+		}
+	}
+
+	a := 1
 	Swap(nil, &a)
 	Swap(&a, nil)
+	Swap(nil, nil)
+
+	x := 9
+	Swap(&x, &x) // aliased pointers must leave the value alone
+	if x != 9 {
+		t.Fatalf("Swap(&x, &x) changed x to %d, want 9", x)
+	}
 }
 
 func TestResetIfNegative(t *testing.T) {
-	f := -3.5
-	ResetIfNegative(&f)
-	if f != 0 {
-		t.Fatalf("ResetIfNegative: got %v, want 0", f)
+	cases := []struct{ in, want float64 }{
+		{-3.5, 0},
+		{-1e-9, 0},
+		{-100, 0},
+		{2.5, 2.5},
+		{0, 0},
+		{1e9, 1e9},
 	}
-	g := 2.5
-	ResetIfNegative(&g)
-	if g != 2.5 {
-		t.Fatalf("ResetIfNegative changed a positive value to %v", g)
+	for _, c := range cases {
+		f := c.in
+		ResetIfNegative(&f)
+		if f != c.want {
+			t.Errorf("ResetIfNegative(&%v): got %v, want %v", c.in, f, c.want)
+		}
 	}
 	ResetIfNegative(nil)
 }
@@ -2202,38 +2506,79 @@ func main() {
 import "testing"
 
 func TestNewInt(t *testing.T) {
-	p := NewInt(7)
-	if p == nil {
-		t.Fatal("NewInt returned nil")
+	cases := []int{0, 7, -1, 42, -1000000}
+	for _, v := range cases {
+		p := NewInt(v)
+		if p == nil {
+			t.Fatalf("NewInt(%d) returned nil", v)
+		}
+		if *p != v {
+			t.Errorf("NewInt(%d) points at %d", v, *p)
+		}
 	}
-	if *p != 7 {
-		t.Fatalf("NewInt(7) points at %d, want 7", *p)
-	}
+}
+
+func TestNewIntIndependent(t *testing.T) {
 	// Each call must produce an independent value.
+	p := NewInt(7)
 	q := NewInt(7)
+	if p == q {
+		t.Fatal("two NewInt calls returned the same pointer")
+	}
 	*p = 99
 	if *q != 7 {
 		t.Fatalf("two NewInt calls share memory: *q = %d, want 7", *q)
 	}
+	*q = -5
+	if *p != 99 {
+		t.Fatalf("NewInt results alias each other: *p = %d, want 99", *p)
+	}
 }
 
 func TestMinMaxPtr(t *testing.T) {
-	lo, hi := MinMaxPtr(3, 1, 4, 1, 5)
-	if lo == nil || hi == nil {
-		t.Fatal("MinMaxPtr returned nil for non-empty input")
+	cases := []struct {
+		nums     []int
+		min, max int
+		empty    bool
+	}{
+		{[]int{3, 1, 4, 1, 5}, 1, 5, false},
+		{[]int{42}, 42, 42, false},
+		{[]int{-5, -1, -9}, -9, -1, false},
+		{[]int{0}, 0, 0, false},
+		{[]int{2, 2, 2}, 2, 2, false},
+		{[]int{5, 4, 3, 2, 1}, 1, 5, false},
+		{[]int{-10, 0, 10}, -10, 10, false},
+		{[]int{1000000, -1000000}, -1000000, 1000000, false},
+		{nil, 0, 0, true},
+		{[]int{}, 0, 0, true},
 	}
-	if *lo != 1 || *hi != 5 {
-		t.Fatalf("MinMaxPtr = %d, %d; want 1, 5", *lo, *hi)
+	for _, c := range cases {
+		lo, hi := MinMaxPtr(c.nums...)
+		if c.empty {
+			if lo != nil || hi != nil {
+				t.Errorf("MinMaxPtr(%v) = %v, %v; want nil, nil", c.nums, lo, hi)
+			}
+			continue
+		}
+		if lo == nil || hi == nil {
+			t.Errorf("MinMaxPtr(%v) returned nil for non-empty input", c.nums)
+			continue
+		}
+		if *lo != c.min || *hi != c.max {
+			t.Errorf("MinMaxPtr(%v) = %d, %d; want %d, %d", c.nums, *lo, *hi, c.min, c.max)
+		}
 	}
+}
 
-	same, same2 := MinMaxPtr(42)
-	if *same != 42 || *same2 != 42 {
-		t.Fatalf("single value gave %d, %d", *same, *same2)
+func TestMinMaxPtrResultsAreSeparate(t *testing.T) {
+	lo, hi := MinMaxPtr(1, 5)
+	*lo = 100
+	if *hi != 5 {
+		t.Fatalf("writing through lo changed hi to %d, want 5", *hi)
 	}
-
-	none, none2 := MinMaxPtr()
-	if none != nil || none2 != nil {
-		t.Fatalf("MinMaxPtr() = %v, %v; want nil, nil", none, none2)
+	*hi = 200
+	if *lo != 100 {
+		t.Fatalf("writing through hi changed lo to %d, want 100", *lo)
 	}
 }
 
@@ -2403,6 +2748,97 @@ func TestSharedPointer(t *testing.T) {
 	Deposit(alias, 25)
 	if Balance(acc) != 25 {
 		t.Fatalf("aliasing does not share state: %d", Balance(acc))
+	}
+}
+
+func TestNewAccountValues(t *testing.T) {
+	cases := []struct {
+		owner   string
+		balance int
+	}{
+		{"Ada", 100},
+		{"Ada", 0},
+		{"Zoë", 5},
+		{"", -1},
+	}
+	for _, c := range cases {
+		acc := NewAccount(c.owner, c.balance)
+		if acc == nil {
+			t.Fatalf("NewAccount(%q, %d) returned nil", c.owner, c.balance)
+		}
+		if acc.Owner != c.owner || acc.Balance != c.balance {
+			t.Errorf("NewAccount(%q, %d) = %+v", c.owner, c.balance, acc)
+		}
+	}
+}
+
+func TestDepositSequences(t *testing.T) {
+	cases := []struct {
+		start    int
+		deposits []int
+		wants    []int
+	}{
+		{100, []int{50}, []int{150}},
+		{0, []int{0, 1, 99}, []int{0, 1, 100}},
+		{10, []int{5, 5, 5}, []int{15, 20, 25}},
+		{1000, []int{250, 250}, []int{1250, 1500}},
+	}
+	for _, c := range cases {
+		acc := NewAccount("Ada", c.start)
+		for i, amount := range c.deposits {
+			if got := Deposit(acc, amount); got != c.wants[i] {
+				t.Errorf("start %d, deposit %d: returned %d, want %d", c.start, amount, got, c.wants[i])
+			}
+			if got := Balance(acc); got != c.wants[i] {
+				t.Errorf("start %d, deposit %d: balance %d, want %d", c.start, amount, got, c.wants[i])
+			}
+		}
+	}
+}
+
+func TestWithdrawSequences(t *testing.T) {
+	cases := []struct {
+		start       int
+		amount      int
+		wantBalance int
+		wantOK      bool
+	}{
+		{100, 100, 0, true},
+		{100, 0, 100, true},
+		{100, 40, 60, true},
+		{0, 0, 0, true},
+		{0, 1, 0, false},
+		{100, 101, 100, false},
+		{5, 10, 5, false},
+	}
+	for _, c := range cases {
+		acc := NewAccount("Ada", c.start)
+		bal, ok := Withdraw(acc, c.amount)
+		if bal != c.wantBalance || ok != c.wantOK {
+			t.Errorf("Withdraw(start=%d, amount=%d) = %d, %v; want %d, %v", c.start, c.amount, bal, ok, c.wantBalance, c.wantOK)
+		}
+		if got := Balance(acc); got != c.wantBalance {
+			t.Errorf("Withdraw(start=%d, amount=%d) left balance %d, want %d", c.start, c.amount, got, c.wantBalance)
+		}
+	}
+}
+
+func TestAccountsAreIndependent(t *testing.T) {
+	a := NewAccount("Ada", 100)
+	b := NewAccount("Bo", 100)
+
+	Deposit(a, 50)
+	if got := Balance(b); got != 100 {
+		t.Fatalf("depositing into a changed b to %d", got)
+	}
+	if _, ok := Withdraw(b, 30); !ok {
+		t.Fatal("withdrawing from b failed")
+	}
+	if got := Balance(a); got != 150 {
+		t.Fatalf("withdrawing from b changed a to %d", got)
+	}
+	if a.Owner != "Ada" || b.Owner != "Bo" {
+		t.Fatalf("owners got mixed up: %q, %q", a.Owner, b.Owner)
 	}
 }
 `,
@@ -2747,34 +3183,59 @@ func main() {
 import "testing"
 
 func TestTranslate(t *testing.T) {
+	cases := []struct {
+		start        Point
+		dx, dy       int
+		wantX, wantY int
+	}{
+		{Point{X: 1, Y: 2}, 10, -1, 11, 1},
+		{Point{}, 0, 0, 0, 0},
+		{Point{X: -5, Y: -5}, -5, 5, -10, 0},
+		{Point{}, 100, 200, 100, 200},
+		{Point{X: 100, Y: -100}, -100, 100, 0, 0},
+		{Point{X: 7, Y: 7}, -7, -7, 0, 0},
+		{Point{X: 1, Y: 2}, 0, 5, 1, 7},
+		{Point{X: -1, Y: -2}, 1, 2, 0, 0},
+	}
+	for _, c := range cases {
+		p := c.start
+		Translate(&p, c.dx, c.dy)
+		if p.X != c.wantX || p.Y != c.wantY {
+			t.Errorf("Translate(%+v, %d, %d) = %+v, want {X:%d Y:%d}", c.start, c.dx, c.dy, p, c.wantX, c.wantY)
+		}
+	}
+}
+
+func TestTranslateThroughAlias(t *testing.T) {
 	p := Point{X: 1, Y: 2}
-	Translate(&p, 10, -1)
-	if p.X != 11 || p.Y != 1 {
-		t.Fatalf("after Translate: %+v, want {X:11 Y:1}", p)
-	}
-
-	q := Point{}
-	Translate(&q, 0, 0)
-	if q.X != 0 || q.Y != 0 {
-		t.Fatalf("translating by zero changed the point: %+v", q)
-	}
-
-	r := Point{X: -5, Y: -5}
-	Translate(&r, -5, 5)
-	if r.X != -10 || r.Y != 0 {
-		t.Fatalf("translate with negatives: %+v, want {X:-10 Y:0}", r)
+	alias := &p // same struct, different pointer variable
+	Translate(alias, 3, 4)
+	if p.X != 4 || p.Y != 6 {
+		t.Fatalf("change through an alias was lost: %+v, want {X:4 Y:6}", p)
 	}
 }
 
 func TestSame(t *testing.T) {
-	if !Same(Point{1, 2}, Point{1, 2}) {
-		t.Error("identical points reported as different")
+	cases := []struct {
+		a, b Point
+		want bool
+	}{
+		{Point{1, 2}, Point{1, 2}, true},
+		{Point{1, 2}, Point{2, 1}, false},
+		{Point{}, Point{}, true},
+		{Point{-1, -2}, Point{-1, -2}, true},
+		{Point{-1, -2}, Point{-1, 2}, false},
+		{Point{1, 2}, Point{1, 3}, false},
+		{Point{0, -1}, Point{0, 0}, false},
+		{Point{1000000, -1000000}, Point{1000000, -1000000}, true},
 	}
-	if Same(Point{1, 2}, Point{2, 1}) {
-		t.Error("different points reported as the same")
-	}
-	if !Same(Point{}, Point{}) {
-		t.Error("two zero points should be equal")
+	for _, c := range cases {
+		if got := Same(c.a, c.b); got != c.want {
+			t.Errorf("Same(%+v, %+v) = %v, want %v", c.a, c.b, got, c.want)
+		}
+		if got, reverse := Same(c.a, c.b), Same(c.b, c.a); got != reverse {
+			t.Errorf("Same is not symmetric for %+v and %+v: %v vs %v", c.a, c.b, got, reverse)
+		}
 	}
 }
 `,
@@ -2887,6 +3348,10 @@ func TestDescribe(t *testing.T) {
 		{Book{Title: "Go", Author: "Ada", Pages: 300}, "Go by Ada (300 pages)"},
 		{Book{Title: "Go", Author: "Ada", Pages: 300, Read: true}, "Go by Ada (300 pages) - read"},
 		{Book{Title: "X", Author: "Y", Pages: 0}, "X by Y (0 pages)"},
+		{Book{}, " by  (0 pages)"},
+		{Book{Title: "Go 语言", Author: "Zoë", Pages: 300}, "Go 语言 by Zoë (300 pages)"},
+		{Book{Title: "X", Author: "Y", Pages: 0, Read: true}, "X by Y (0 pages) - read"},
+		{Book{Title: "Big", Author: "Z", Pages: 1000000}, "Big by Z (1000000 pages)"},
 	}
 	for _, c := range cases {
 		if got := Describe(c.book); got != c.want {
@@ -2896,29 +3361,51 @@ func TestDescribe(t *testing.T) {
 }
 
 func TestMarkReadDoesNotMutate(t *testing.T) {
-	original := Book{Title: "Go", Author: "Ada", Pages: 300}
-	marked := MarkRead(original)
-
-	if !marked.Read {
-		t.Error("MarkRead did not set Read on the copy")
+	cases := []Book{
+		{Title: "Go", Author: "Ada", Pages: 300},
+		{Title: "", Author: "", Pages: 0},
+		{Title: "Already", Author: "Read", Pages: 12, Read: true},
+		{Title: "Big", Author: "Bo", Pages: 1000000},
 	}
-	if original.Read {
-		t.Error("MarkRead changed the original book — structs are copied, so this should be impossible")
+	for _, original := range cases {
+		before := original
+		marked := MarkRead(original)
+
+		if !marked.Read {
+			t.Errorf("MarkRead(%+v) did not set Read on the copy", original)
+		}
+		if original != before {
+			t.Errorf("MarkRead changed the original book: got %+v, want %+v", original, before)
+		}
+		if marked.Title != original.Title || marked.Author != original.Author || marked.Pages != original.Pages {
+			t.Errorf("MarkRead changed fields other than Read: got %+v, want %+v with Read true", marked, original)
+		}
+		want := Book{Title: original.Title, Author: original.Author, Pages: original.Pages, Read: true}
+		if marked != want {
+			t.Errorf("MarkRead(%+v) = %+v, want %+v", original, marked, want)
+		}
+		if twice := MarkRead(marked); twice != marked {
+			t.Errorf("MarkRead is not idempotent: %+v then %+v", marked, twice)
+		}
 	}
 }
 
 func TestLonger(t *testing.T) {
-	short := Book{Title: "Short", Pages: 100}
-	long := Book{Title: "Long", Pages: 500}
-
-	if got := Longer(short, long); got.Title != "Long" {
-		t.Errorf("Longer(short, long) = %q, want Long", got.Title)
+	cases := []struct {
+		a, b Book
+		want Book
+	}{
+		{Book{Title: "Short", Pages: 100}, Book{Title: "Long", Pages: 500}, Book{Title: "Long", Pages: 500}},
+		{Book{Title: "Long", Pages: 500}, Book{Title: "Short", Pages: 100}, Book{Title: "Long", Pages: 500}},
+		{Book{Title: "Short", Pages: 100}, Book{Title: "Short", Pages: 100}, Book{Title: "Short", Pages: 100}},
+		{Book{Title: "Zero", Pages: 0}, Book{Title: "One", Pages: 1}, Book{Title: "One", Pages: 1}},
+		{Book{Title: "TieA", Pages: 0}, Book{Title: "TieB", Pages: 0}, Book{Title: "TieA", Pages: 0}},
+		{Book{Title: "Neg", Pages: -5}, Book{Title: "LessNeg", Pages: -1}, Book{Title: "LessNeg", Pages: -1}},
 	}
-	if got := Longer(long, short); got.Title != "Long" {
-		t.Errorf("Longer(long, short) = %q, want Long", got.Title)
-	}
-	if got := Longer(short, short); got.Title != "Short" {
-		t.Errorf("Longer with a tie = %q, want Short", got.Title)
+	for _, c := range cases {
+		if got := Longer(c.a, c.b); got != c.want {
+			t.Errorf("Longer(%+v, %+v) = %+v, want %+v", c.a, c.b, got, c.want)
+		}
 	}
 }
 `,
@@ -3052,37 +3539,91 @@ func main() {
 import "testing"
 
 func TestNewItem(t *testing.T) {
-	it := NewItem("A1", "Mug", 10, 3, 2)
-	if it.SKU != "A1" || it.Name != "Mug" || it.Quantity != 10 {
-		t.Fatalf("NewItem = %+v", it)
+	cases := []struct {
+		sku, name    string
+		quantity     int
+		aisle, shelf int
+	}{
+		{"A1", "Mug", 10, 3, 2},
+		{"", "", 0, 0, 0},
+		{"SKU-π", "カップ", 3, 1, 2},
+		{"BIG", "Box", 1000000, 100, 200},
 	}
-	if it.Where.Aisle != 3 || it.Where.Shelf != 2 {
-		t.Fatalf("nested Location = %+v, want {Aisle:3 Shelf:2}", it.Where)
+	for _, c := range cases {
+		it := NewItem(c.sku, c.name, c.quantity, c.aisle, c.shelf)
+		want := Item{
+			SKU:      c.sku,
+			Name:     c.name,
+			Quantity: c.quantity,
+			Where:    Location{Aisle: c.aisle, Shelf: c.shelf},
+		}
+		if it != want {
+			t.Errorf("NewItem(%q, %q, %d, %d, %d) = %+v, want %+v", c.sku, c.name, c.quantity, c.aisle, c.shelf, it, want)
+		}
 	}
 }
 
 func TestRestockCopies(t *testing.T) {
-	it := NewItem("A1", "Mug", 10, 3, 2)
-	more := Restock(it, 5)
-	if more.Quantity != 15 {
-		t.Fatalf("Restock = %d, want 15", more.Quantity)
+	cases := []struct {
+		start, amount, want int
+	}{
+		{10, 5, 15},
+		{0, 0, 0},
+		{0, 7, 7},
+		{10, 0, 10},
+		{1, 999, 1000},
+		{1000000, 1, 1000001},
 	}
-	if it.Quantity != 10 {
-		t.Fatalf("Restock changed the original: %d", it.Quantity)
+	for _, c := range cases {
+		it := NewItem("A1", "Mug", c.start, 3, 2)
+		before := it
+		more := Restock(it, c.amount)
+		if more.Quantity != c.want {
+			t.Errorf("Restock(start=%d, amount=%d) = %d, want %d", c.start, c.amount, more.Quantity, c.want)
+		}
+		if more.SKU != it.SKU || more.Name != it.Name || more.Where != it.Where {
+			t.Errorf("Restock changed fields other than Quantity: got %+v, want %+v with Quantity %d", more, it, c.want)
+		}
+		if it != before {
+			t.Errorf("Restock changed the original: got %+v, want %+v", it, before)
+		}
 	}
 }
 
 func TestTotalQuantity(t *testing.T) {
-	items := []Item{
-		NewItem("A1", "Mug", 10, 1, 1),
-		NewItem("B2", "Plate", 5, 1, 2),
-		NewItem("C3", "Bowl", 2, 1, 3),
+	cases := []struct {
+		name  string
+		items []Item
+		want  int
+	}{
+		{"nil", nil, 0},
+		{"empty", []Item{}, 0},
+		{"single", []Item{NewItem("A1", "Mug", 10, 1, 1)}, 10},
+		{"zeros", []Item{NewItem("A1", "Mug", 0, 1, 1), NewItem("B2", "Plate", 0, 1, 2)}, 0},
+		{
+			"several",
+			[]Item{
+				NewItem("A1", "Mug", 10, 1, 1),
+				NewItem("B2", "Plate", 5, 1, 2),
+				NewItem("C3", "Bowl", 2, 1, 3),
+			},
+			17,
+		},
+		{
+			"duplicate SKUs are all counted",
+			[]Item{NewItem("A1", "Mug", 2, 1, 1), NewItem("A1", "Cup", 3, 2, 2)},
+			5,
+		},
+		{
+			"large",
+			[]Item{NewItem("A1", "Mug", 1000000, 1, 1), NewItem("B2", "Plate", 2000000, 1, 2)},
+			3000000,
+		},
 	}
-	if got := TotalQuantity(items); got != 17 {
-		t.Fatalf("TotalQuantity = %d, want 17", got)
-	}
-	if got := TotalQuantity(nil); got != 0 {
-		t.Fatalf("TotalQuantity(nil) = %d, want 0", got)
+	for _, c := range cases {
+		if got := TotalQuantity(c.items); got != c.want {
+			t.Errorf("%s: TotalQuantity = %d, want %d", c.name, got, c.want)
+		}
 	}
 }
 
@@ -3090,16 +3631,57 @@ func TestFindBySKU(t *testing.T) {
 	items := []Item{
 		NewItem("A1", "Mug", 10, 1, 1),
 		NewItem("B2", "Plate", 5, 1, 2),
+		NewItem("C3", "Bowl", 2, 2, 3),
 	}
-	got, ok := FindBySKU(items, "B2")
-	if !ok || got.Name != "Plate" {
-		t.Fatalf("FindBySKU(B2) = %+v, %v", got, ok)
+	cases := []struct {
+		sku  string
+		want Item
+		ok   bool
+	}{
+		{"A1", items[0], true},
+		{"B2", items[1], true},
+		{"C3", items[2], true},
+		{"ZZ", Item{}, false},
+		{"a1", Item{}, false},
+		{"", Item{}, false},
 	}
-	if _, ok := FindBySKU(items, "ZZ"); ok {
-		t.Fatal("FindBySKU found a missing SKU")
+	for _, c := range cases {
+		got, ok := FindBySKU(items, c.sku)
+		if ok != c.ok {
+			t.Errorf("FindBySKU(%q) ok = %v, want %v", c.sku, ok, c.ok)
+		}
+		if got != c.want {
+			t.Errorf("FindBySKU(%q) = %+v, want %+v", c.sku, got, c.want)
+		}
 	}
+
 	if _, ok := FindBySKU(nil, "A1"); ok {
 		t.Fatal("FindBySKU found something in an empty list")
+	}
+	if _, ok := FindBySKU([]Item{}, "A1"); ok {
+		t.Fatal("FindBySKU found something in an empty slice")
+	}
+}
+
+func TestFindBySKUReturnsFirstMatch(t *testing.T) {
+	items := []Item{
+		NewItem("A1", "Mug", 1, 1, 1),
+		NewItem("A1", "Cup", 2, 2, 2),
+	}
+	got, ok := FindBySKU(items, "A1")
+	if !ok || got.Name != "Mug" || got.Quantity != 1 {
+		t.Fatalf("FindBySKU with duplicate SKUs = %+v, %v; want the first match", got, ok)
+	}
+}
+
+func TestFindBySKUUnicode(t *testing.T) {
+	items := []Item{
+		NewItem("SKU-π", "カップ", 3, 1, 2),
+		NewItem("SKU-2", "Cup", 4, 1, 3),
+	}
+	got, ok := FindBySKU(items, "SKU-π")
+	if !ok || got.Name != "カップ" || got.Where != (Location{Aisle: 1, Shelf: 2}) {
+		t.Fatalf("FindBySKU unicode = %+v, %v", got, ok)
 	}
 }
 `,

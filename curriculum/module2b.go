@@ -531,6 +531,92 @@ func TestSummarize(t *testing.T) {
 		t.Fatalf("id = %v", m["id"])
 	}
 }
+
+func TestMustJSONZeroUser(t *testing.T) {
+	b, err := MustJSON(User{})
+	if err != nil {
+		t.Fatalf("MustJSON: %v", err)
+	}
+	want := "{\"id\":0,\"name\":\"\",\"email\":\"\",\"created_at\":\"\"}"
+	if string(b) != want {
+		t.Fatalf("JSON = %s, want %s", b, want)
+	}
+}
+
+func TestMustJSONOmitsOptionalCreateFields(t *testing.T) {
+	b, err := MustJSON(CreateUserRequest{Name: "N", Email: "n@x.io"})
+	if err != nil {
+		t.Fatalf("MustJSON: %v", err)
+	}
+	want := "{\"name\":\"N\",\"email\":\"n@x.io\"}"
+	if string(b) != want {
+		t.Fatalf("JSON = %s, want %s", b, want)
+	}
+}
+
+func TestMustJSONReportsUnsupportedValues(t *testing.T) {
+	if _, err := MustJSON(func() {}); err == nil {
+		t.Fatal("marshalling a func should return an error")
+	}
+}
+
+func TestParseCreateUserCases(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		wantErr bool
+	}{
+		{"minimal fields", "{\"name\":\"Bo\",\"email\":\"bo@x.io\"}", false},
+		{"explicit zero age", "{\"name\":\"Bo\",\"email\":\"bo@x.io\",\"age\":0}", false},
+		{"multiple tags", "{\"name\":\"Bo\",\"email\":\"bo@x.io\",\"tags\":[\"a\",\"b\"]}", false},
+		{"empty tags", "{\"name\":\"Bo\",\"email\":\"bo@x.io\",\"tags\":[]}", false},
+		{"blank name", "{\"name\":\"   \",\"email\":\"bo@x.io\"}", true},
+		{"tab name", "{\"name\":\"\\t\",\"email\":\"bo@x.io\"}", true},
+		{"missing name", "{\"email\":\"bo@x.io\"}", true},
+		{"missing email", "{\"name\":\"Bo\"}", true},
+		{"empty object", "{}", true},
+		{"null body", "null", true},
+		{"empty body", "", true},
+		{"whitespace body", "   \n\t", true},
+		{"malformed body", "not json", true},
+		{"array body", "[]", true},
+		{"unknown field", "{\"name\":\"Bo\",\"email\":\"bo@x.io\",\"nope\":1}", true},
+		{"age wrong type", "{\"name\":\"Bo\",\"email\":\"bo@x.io\",\"age\":\"old\"}", true},
+		{"tags wrong type", "{\"name\":\"Bo\",\"email\":\"bo@x.io\",\"tags\":\"a\"}", true},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseCreateUser([]byte(tc.body))
+			if tc.wantErr && err == nil {
+				t.Fatalf("body %q was accepted, want an error", tc.body)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("body %q: unexpected error: %v", tc.body, err)
+			}
+		})
+	}
+}
+
+func TestParseCreateUserKeepsExplicitZeroAgeAndTags(t *testing.T) {
+	req, err := ParseCreateUser([]byte("{\"name\":\"Bo\",\"email\":\"bo@x.io\",\"age\":0,\"tags\":[\"x\",\"y\"]}"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if req.Age == nil || *req.Age != 0 {
+		t.Fatalf("Age = %v, want a pointer to 0", req.Age)
+	}
+	if len(req.Tags) != 2 || req.Tags[0] != "x" || req.Tags[1] != "y" {
+		t.Fatalf("Tags = %v, want [x y]", req.Tags)
+	}
+}
+
+func TestSummarizeUnsupportedValue(t *testing.T) {
+	if _, err := Summarize(func() {}); err == nil {
+		t.Fatal("Summarize should report a marshalling error")
+	}
+}
 `,
 				}},
 				Hints: []string{
@@ -675,6 +761,7 @@ func main() {
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -729,6 +816,126 @@ func TestReadJSONRejectsBadInput(t *testing.T) {
 func TestRoundTrip(t *testing.T) {
 	var buf bytes.Buffer
 	in := payload{Name: "Bo", Age: 10}
+	if err := WriteJSON(&buf, in); err != nil {
+		t.Fatal(err)
+	}
+	var out payload
+	if err := ReadJSON(&buf, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out != in {
+		t.Fatalf("round trip gave %+v, want %+v", out, in)
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, errors.New("disk full")
+}
+
+func TestWriteJSONWritesOneDocument(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteJSON(&buf, payload{Name: "Ada", Age: 0}); err != nil {
+		t.Fatalf("WriteJSON: %v", err)
+	}
+	got := buf.String()
+	if strings.Count(got, "\n") != 1 {
+		t.Fatalf("output should contain exactly one trailing newline, got %q", got)
+	}
+	if !strings.HasSuffix(got, "\n") {
+		t.Fatalf("output should end with a newline, got %q", got)
+	}
+}
+
+func TestWriteJSONNilValue(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteJSON(&buf, nil); err != nil {
+		t.Fatalf("WriteJSON(nil): %v", err)
+	}
+	if got := strings.TrimSpace(buf.String()); got != "null" {
+		t.Fatalf("WriteJSON(nil) = %q, want null", got)
+	}
+}
+
+func TestWriteJSONReportsWriterError(t *testing.T) {
+	err := WriteJSON(failingWriter{}, payload{Name: "Ada"})
+	if err == nil {
+		t.Fatal("a failing writer should produce an error")
+	}
+	if !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("the underlying writer error was lost: %v", err)
+	}
+}
+
+func TestWriteJSONReportsUnsupportedValue(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteJSON(&buf, func() {}); err == nil {
+		t.Fatal("encoding a func should return an error")
+	}
+}
+
+func TestReadJSONCases(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		wantErr bool
+		want    payload
+	}{
+		{"both fields", "{\"name\":\"Ada\",\"age\":36}", false, payload{Name: "Ada", Age: 36}},
+		{"omitted age", "{\"name\":\"Ada\"}", false, payload{Name: "Ada", Age: 0}},
+		{"empty object", "{}", false, payload{}},
+		{"unknown field", "{\"name\":\"Ada\",\"nope\":1}", true, payload{}},
+		{"empty body", "", true, payload{}},
+		{"whitespace body", "  \n\t", true, payload{}},
+		{"malformed body", "{oops", true, payload{}},
+		{"truncated body", "{\"name\":", true, payload{}},
+		{"array body", "[]", true, payload{}},
+		{"top-level string", "\"hi\"", true, payload{}},
+		{"string into number", "{\"age\":\"old\"}", true, payload{}},
+		{"number into string", "{\"name\":42}", true, payload{}},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var got payload
+			err := ReadJSON(strings.NewReader(tc.body), &got)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("body %q was accepted, want an error", tc.body)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("body %q: unexpected error: %v", tc.body, err)
+			}
+			if got != tc.want {
+				t.Fatalf("decoded %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestReadJSONIntoMap(t *testing.T) {
+	var m map[string]int
+	if err := ReadJSON(strings.NewReader("{\"a\":1,\"b\":2}"), &m); err != nil {
+		t.Fatalf("ReadJSON into a map: %v", err)
+	}
+	if len(m) != 2 || m["a"] != 1 || m["b"] != 2 {
+		t.Fatalf("decoded map = %v", m)
+	}
+}
+
+func TestReadJSONRejectsNilTarget(t *testing.T) {
+	if err := ReadJSON(strings.NewReader("{}"), nil); err == nil {
+		t.Fatal("a nil target should produce an error")
+	}
+}
+
+func TestRoundTripSpecialCharacters(t *testing.T) {
+	var buf bytes.Buffer
+	in := payload{Name: "Ada \"Lovelace\" <ada@x.io> & co", Age: 36}
 	if err := WriteJSON(&buf, in); err != nil {
 		t.Fatal(err)
 	}
@@ -1175,6 +1382,77 @@ func TestWrongMethod(t *testing.T) {
 		t.Fatalf("status = %d, want 405", rec.Code)
 	}
 }
+
+func TestHelloNamesAndQueries(t *testing.T) {
+	cases := []struct {
+		name   string
+		target string
+		want   string
+	}{
+		{"lowercase", "/hello/ada", "hello, ada!"},
+		{"mixed case", "/hello/Ada", "hello, Ada!"},
+		{"digits and dash", "/hello/bo-7", "hello, bo-7!"},
+		{"leading zeros", "/hello/007", "hello, 007!"},
+		{"shout true", "/hello/ada?shout=true", "HELLO, ADA!"},
+		{"shout false", "/hello/ada?shout=false", "hello, ada!"},
+		{"shout uppercase is not true", "/hello/ada?shout=TRUE", "hello, ada!"},
+		{"shout one is not true", "/hello/ada?shout=1", "hello, ada!"},
+		{"shout empty", "/hello/ada?shout=", "hello, ada!"},
+		{"extra query parameters", "/hello/ada?shout=true&x=1", "HELLO, ADA!"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			rec := do(t, http.MethodGet, tc.target)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s: status = %d, want 200", tc.target, rec.Code)
+			}
+			if got := rec.Body.String(); got != tc.want {
+				t.Fatalf("%s: body = %q, want %q", tc.target, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUnknownPathsAreNotFound(t *testing.T) {
+	paths := []string{"/", "/hello", "/hello/", "/hello/ada/extra", "/nope"}
+	for _, path := range paths {
+		path := path
+		t.Run(path, func(t *testing.T) {
+			rec := do(t, http.MethodGet, path)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("GET %s: status = %d, want 404", path, rec.Code)
+			}
+		})
+	}
+}
+
+func TestOtherMethodsAreNotAllowed(t *testing.T) {
+	methods := []string{
+		http.MethodPost,
+		http.MethodPut,
+		http.MethodPatch,
+		http.MethodDelete,
+		http.MethodOptions,
+	}
+	for _, method := range methods {
+		method := method
+		t.Run(method, func(t *testing.T) {
+			rec := do(t, method, "/hello/ada")
+			if rec.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("%s: status = %d, want 405", method, rec.Code)
+			}
+		})
+	}
+}
+
+func TestWrongMethodOnUnknownPathIsNotFound(t *testing.T) {
+	rec := do(t, http.MethodPost, "/nope")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("POST /nope: status = %d, want 404", rec.Code)
+	}
+}
 `,
 				}},
 				Hints: []string{
@@ -1289,6 +1567,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -1370,6 +1649,209 @@ func TestGetUserBadID(t *testing.T) {
 
 func TestConstructorWithNilStore(t *testing.T) {
 	_ = NewUserHandler(nil) // must not panic at construction time
+}
+
+type staticStore struct {
+	user User
+	err  error
+}
+
+func (s staticStore) Get(ctx context.Context, id int) (User, error) {
+	return s.user, s.err
+}
+
+func TestGetUserTable(t *testing.T) {
+	users := map[int]User{
+		0:  {ID: 0, Email: "zero@x.io"},
+		7:  {ID: 7, Email: "seven@x.io"},
+		42: {ID: 42, Email: "forty-two@x.io"},
+	}
+	h := NewUserHandler(fakeStore{users: users})
+
+	cases := []struct {
+		path string
+		id   int
+	}{
+		{"/users/0", 0},
+		{"/users/7", 7},
+		{"/users/42", 42},
+		{"/users/007", 7},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.path, func(t *testing.T) {
+			rec := get(t, h, tc.path)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+			}
+			var got User
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("body is not a User: %v", err)
+			}
+			if got.ID != tc.id || got.Email != users[tc.id].Email {
+				t.Fatalf("user = %+v, want id %d", got, tc.id)
+			}
+		})
+	}
+}
+
+func TestGetUserBadIDTable(t *testing.T) {
+	h := NewUserHandler(fakeStore{users: map[int]User{}})
+	paths := []string{
+		"/users/abc",
+		"/users/1.5",
+		"/users/0x10",
+		"/users/%20",
+		"/users/999999999999999999999999",
+	}
+	for _, path := range paths {
+		path := path
+		t.Run(path, func(t *testing.T) {
+			rec := get(t, h, path)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (body %s)", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestGetUserNotFoundEnvelope(t *testing.T) {
+	h := NewUserHandler(fakeStore{users: map[int]User{}})
+	rec := get(t, h, "/users/7")
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	var e map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &e); err != nil {
+		t.Fatalf("404 body is not JSON: %v (%s)", err, rec.Body.String())
+	}
+	if e["error"] != "not found" {
+		t.Fatalf("404 body = %s, want {\"error\":\"not found\"}", rec.Body.String())
+	}
+}
+
+func TestGetUserWrappedNotFound(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"direct sentinel", ErrNotFound},
+		{"one wrap", fmt.Errorf("lookup 7: %w", ErrNotFound)},
+		{"two wraps", fmt.Errorf("outer: %w", fmt.Errorf("inner: %w", ErrNotFound))},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewUserHandler(staticStore{err: tc.err})
+			rec := get(t, h, "/users/7")
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404 (body %s)", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestGetUserOtherErrorsAre500(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{"plain error", errors.New("db exploded")},
+		{"error text that says not found", errors.New("not found")},
+		{"wrapped unrelated error", fmt.Errorf("lookup: %w", errors.New("boom"))},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewUserHandler(staticStore{err: tc.err})
+			rec := get(t, h, "/users/7")
+			if rec.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), "exploded") || strings.Contains(rec.Body.String(), "boom") {
+				t.Fatalf("the internal error message leaked: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+type probeKey string
+
+type ctxStore struct {
+	got any
+}
+
+func (s *ctxStore) Get(ctx context.Context, id int) (User, error) {
+	s.got = ctx.Value(probeKey("k"))
+	return User{ID: id, Email: "ctx@x.io"}, nil
+}
+
+func TestHandlerUsesRequestContext(t *testing.T) {
+	store := &ctxStore{}
+	h := NewUserHandler(store)
+
+	req := httptest.NewRequest(http.MethodGet, "/users/5", nil)
+	req = req.WithContext(context.WithValue(req.Context(), probeKey("k"), "v"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if store.got != "v" {
+		t.Fatalf("the store saw context value %v, want v", store.got)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+}
+
+type canceledStore struct{}
+
+func (canceledStore) Get(ctx context.Context, id int) (User, error) {
+	return User{}, ctx.Err()
+}
+
+func TestCanceledRequestContextReachesStore(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	h := NewUserHandler(canceledStore{})
+	req := httptest.NewRequest(http.MethodGet, "/users/1", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+}
+
+func TestWrongMethodsAreRejected(t *testing.T) {
+	h := NewUserHandler(fakeStore{users: map[int]User{7: {ID: 7}}})
+	methods := []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete}
+	for _, method := range methods {
+		method := method
+		t.Run(method, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(method, "/users/7", nil))
+			if rec.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("%s: status = %d, want 405", method, rec.Code)
+			}
+		})
+	}
+}
+
+func TestUnknownUserPaths(t *testing.T) {
+	h := NewUserHandler(fakeStore{users: map[int]User{7: {ID: 7}}})
+	paths := []string{"/", "/users", "/users/", "/nope"}
+	for _, path := range paths {
+		path := path
+		t.Run(path, func(t *testing.T) {
+			rec := get(t, h, path)
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("GET %s: status = %d, want 404", path, rec.Code)
+			}
+		})
+	}
 }
 `,
 				}},
@@ -1753,9 +2235,11 @@ func main() {
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 )
 
@@ -1871,6 +2355,220 @@ func TestNotFoundAndDelete(t *testing.T) {
 	resp, _ = do(t, http.MethodDelete, srv.URL+"/items/"+itoa(item.ID), "")
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("second delete status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestListAfterCreates(t *testing.T) {
+	srv := newServer(t)
+	names := []string{"alpha", "beta", "gamma"}
+	ids := map[int]bool{}
+
+	for _, name := range names {
+		resp, body := do(t, http.MethodPost, srv.URL+"/items", fmt.Sprintf("{\"name\":%q}", name))
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("create %q: status = %d, want 201 (body %s)", name, resp.StatusCode, body)
+		}
+		var item Item
+		if err := json.Unmarshal(body, &item); err != nil {
+			t.Fatalf("create %q: body is not an Item: %v", name, err)
+		}
+		if item.ID == 0 {
+			t.Fatalf("create %q: no server-assigned id: %+v", name, item)
+		}
+		if ids[item.ID] {
+			t.Fatalf("create %q: duplicate id %d", name, item.ID)
+		}
+		ids[item.ID] = true
+	}
+
+	resp, body := do(t, http.MethodGet, srv.URL+"/items", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list status = %d, want 200", resp.StatusCode)
+	}
+	var items []Item
+	if err := json.Unmarshal(body, &items); err != nil {
+		t.Fatalf("list body is not an array: %v (%s)", err, body)
+	}
+	if len(items) != len(names) {
+		t.Fatalf("list has %d items, want %d (%s)", len(items), len(names), body)
+	}
+	seen := map[string]bool{}
+	for _, item := range items {
+		seen[item.Name] = true
+		if item.ID == 0 {
+			t.Fatalf("listed item has no id: %+v", item)
+		}
+	}
+	for _, name := range names {
+		if !seen[name] {
+			t.Fatalf("list is missing %q: %v", name, items)
+		}
+	}
+}
+
+func TestCreateBadBodies(t *testing.T) {
+	srv := newServer(t)
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"empty body", ""},
+		{"empty object", "{}"},
+		{"empty name", "{\"name\":\"\"}"},
+		{"null body", "null"},
+		{"array body", "[]"},
+		{"malformed json", "{oops"},
+		{"wrong name type", "{\"name\":123}"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			resp, body := do(t, http.MethodPost, srv.URL+"/items", tc.body)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (body %s)", resp.StatusCode, body)
+			}
+		})
+	}
+}
+
+func TestDeleteThenGetAndList(t *testing.T) {
+	srv := newServer(t)
+
+	_, body := do(t, http.MethodPost, srv.URL+"/items", "{\"name\":\"gone\"}")
+	var item Item
+	if err := json.Unmarshal(body, &item); err != nil || item.ID == 0 {
+		t.Fatalf("create body = %s (err %v)", body, err)
+	}
+
+	resp, body := do(t, http.MethodDelete, srv.URL+"/items/"+itoa(item.ID), "")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want 204", resp.StatusCode)
+	}
+	if len(body) != 0 {
+		t.Fatalf("204 response had a body: %q", body)
+	}
+
+	resp, _ = do(t, http.MethodGet, srv.URL+"/items/"+itoa(item.ID), "")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("get after delete status = %d, want 404", resp.StatusCode)
+	}
+
+	resp, body = do(t, http.MethodGet, srv.URL+"/items", "")
+	if got := string(bytes.TrimSpace(body)); got != "[]" {
+		t.Fatalf("list after deleting everything = %q, want []", got)
+	}
+}
+
+func TestUnknownItemIDs(t *testing.T) {
+	srv := newServer(t)
+	for _, id := range []string{"0", "-1", "999", "abc"} {
+		id := id
+		t.Run("get/"+id, func(t *testing.T) {
+			resp, body := do(t, http.MethodGet, srv.URL+"/items/"+id, "")
+			if resp.StatusCode != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404 (body %s)", resp.StatusCode, body)
+			}
+			var e map[string]string
+			if err := json.Unmarshal(body, &e); err != nil || e["error"] == "" {
+				t.Fatalf("404 body = %s, want an error envelope", body)
+			}
+		})
+		t.Run("delete/"+id, func(t *testing.T) {
+			resp, _ := do(t, http.MethodDelete, srv.URL+"/items/"+id, "")
+			if resp.StatusCode != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404", resp.StatusCode)
+			}
+		})
+	}
+}
+
+func TestWrongMethodsAndUnknownRoutes(t *testing.T) {
+	srv := newServer(t)
+	methodCases := []struct {
+		method string
+		path   string
+		want   int
+	}{
+		{http.MethodPut, "/items", http.StatusMethodNotAllowed},
+		{http.MethodPatch, "/items/1", http.StatusMethodNotAllowed},
+		{http.MethodPost, "/items/1", http.StatusMethodNotAllowed},
+		{http.MethodGet, "/nope", http.StatusNotFound},
+		{http.MethodPost, "/nope", http.StatusNotFound},
+	}
+	for _, tc := range methodCases {
+		tc := tc
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			resp, _ := do(t, tc.method, srv.URL+tc.path, "")
+			if resp.StatusCode != tc.want {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tc.want)
+			}
+		})
+	}
+}
+
+func TestConcurrentCreates(t *testing.T) {
+	srv := newServer(t)
+	const n = 24
+
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			body := fmt.Sprintf("{\"name\":\"item-%02d\"}", i)
+			req, err := http.NewRequest(http.MethodPost, srv.URL+"/items", bytes.NewBufferString(body))
+			if err != nil {
+				errs <- err
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := srv.Client().Do(req)
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusCreated {
+				data, _ := io.ReadAll(resp.Body)
+				errs <- fmt.Errorf("create %d: status %d: %s", i, resp.StatusCode, data)
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent create: %v", err)
+	}
+	if t.Failed() {
+		return
+	}
+
+	resp, body := do(t, http.MethodGet, srv.URL+"/items", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("list status = %d, want 200", resp.StatusCode)
+	}
+	var items []Item
+	if err := json.Unmarshal(body, &items); err != nil {
+		t.Fatalf("list body is not an array: %v (%s)", err, body)
+	}
+	if len(items) != n {
+		t.Fatalf("after %d concurrent creates the list has %d items", n, len(items))
+	}
+	ids := map[int]bool{}
+	names := map[string]bool{}
+	for _, item := range items {
+		if item.ID == 0 {
+			t.Fatalf("listed item has no id: %+v", item)
+		}
+		if ids[item.ID] {
+			t.Fatalf("duplicate id %d after concurrent creates", item.ID)
+		}
+		if names[item.Name] {
+			t.Fatalf("duplicate name %q after concurrent creates", item.Name)
+		}
+		ids[item.ID] = true
+		names[item.Name] = true
 	}
 }
 `,
@@ -2357,9 +3055,11 @@ func main() {
 					Content: `package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -2469,6 +3169,254 @@ func TestChainOrder(t *testing.T) {
 		if order[i] != want[i] {
 			t.Fatalf("order = %v, want %v", order, want)
 		}
+	}
+}
+
+func TestRequestIDFromEmptyContext(t *testing.T) {
+	if got := RequestIDFrom(context.Background()); got != "" {
+		t.Fatalf("RequestIDFrom(empty) = %q, want an empty string", got)
+	}
+}
+
+func TestRequestIDUniquePerRequest(t *testing.T) {
+	var ids []string
+	h := Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ids = append(ids, RequestIDFrom(r.Context()))
+	}), RequestID)
+
+	headers := make([]string, 4)
+	for i := range headers {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		headers[i] = rec.Header().Get("X-Request-ID")
+		if headers[i] == "" {
+			t.Fatalf("request %d: no generated X-Request-ID", i)
+		}
+	}
+
+	seen := map[string]bool{}
+	for i, id := range ids {
+		if id == "" {
+			t.Fatalf("request %d: handler saw an empty request id", i)
+		}
+		if id != headers[i] {
+			t.Fatalf("request %d: handler saw %q but the header was %q", i, id, headers[i])
+		}
+		if seen[id] {
+			t.Fatalf("request %d reused request id %q", i, id)
+		}
+		seen[id] = true
+	}
+}
+
+type otherContextKey string
+
+func TestRequestIDPreservesExistingContextValues(t *testing.T) {
+	var sawOther any
+	h := Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawOther = r.Context().Value(otherContextKey("keep"))
+		if RequestIDFrom(r.Context()) == "" {
+			t.Error("the handler did not see a request id")
+		}
+	}), RequestID)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req = req.WithContext(context.WithValue(req.Context(), otherContextKey("keep"), "kept"))
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if sawOther != "kept" {
+		t.Fatalf("existing context value = %v, want kept", sawOther)
+	}
+}
+
+func TestRequireTokenCases(t *testing.T) {
+	cases := []struct {
+		name   string
+		header string
+		want   int
+		next   bool
+	}{
+		{"missing header", "", http.StatusUnauthorized, false},
+		{"wrong token", "Bearer wrong", http.StatusUnauthorized, false},
+		{"wrong scheme", "Basic s3cret", http.StatusUnauthorized, false},
+		{"scheme only", "Bearer", http.StatusUnauthorized, false},
+		{"empty token", "Bearer ", http.StatusUnauthorized, false},
+		{"extra token text", "Bearer s3cret extra", http.StatusUnauthorized, false},
+		{"valid token", "Bearer s3cret", http.StatusNoContent, true},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			nextCalled := false
+			h := Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				nextCalled = true
+				w.WriteHeader(http.StatusNoContent)
+			}), RequireToken("s3cret"))
+
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			if tc.header != "" {
+				req.Header.Set("Authorization", tc.header)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.want)
+			}
+			if nextCalled != tc.next {
+				t.Fatalf("next called = %v, want %v", nextCalled, tc.next)
+			}
+		})
+	}
+}
+
+func TestRequireTokenDoesNotRunNext(t *testing.T) {
+	ran := false
+	h := Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ran = true
+	}), RequireToken("token"))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if ran {
+		t.Fatal("the protected handler ran without a token")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestChainWithNoMiddleware(t *testing.T) {
+	called := false
+	h := Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		_, _ = w.Write([]byte("ok"))
+	}))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if !called {
+		t.Fatal("Chain with no middleware did not call the handler")
+	}
+	if rec.Body.String() != "ok" {
+		t.Fatalf("body = %q, want ok", rec.Body.String())
+	}
+}
+
+func TestChainWithOneMiddleware(t *testing.T) {
+	var order []string
+	mw := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			order = append(order, "in")
+			next.ServeHTTP(w, r)
+			order = append(order, "out")
+		})
+	}
+	h := Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		order = append(order, "handler")
+	}), mw)
+
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+
+	want := []string{"in", "handler", "out"}
+	if len(order) != len(want) {
+		t.Fatalf("order = %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("order = %v, want %v", order, want)
+		}
+	}
+}
+
+func TestRecovererPassesThroughNormalResponses(t *testing.T) {
+	h := Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte("created"))
+	}), Recoverer)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/", nil))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", rec.Code)
+	}
+	if rec.Body.String() != "created" {
+		t.Fatalf("body = %q, want created", rec.Body.String())
+	}
+}
+
+func TestRecovererHandlesNonStringPanic(t *testing.T) {
+	h := Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic(42)
+	}), Recoverer)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "internal server error") {
+		t.Fatalf("body = %q", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "42") {
+		t.Fatalf("the panic value leaked to the client: %q", rec.Body.String())
+	}
+}
+
+func TestRequestIDRunsOuterOfRecoverer(t *testing.T) {
+	h := Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic("boom")
+	}), RequestID, Recoverer)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	if rec.Header().Get("X-Request-ID") == "" {
+		t.Fatal("the request id header was lost when the handler panicked")
+	}
+}
+
+func TestRequestIDConcurrent(t *testing.T) {
+	const n = 25
+	h := Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(RequestIDFrom(r.Context())))
+	}), RequestID)
+
+	headers := make([]string, n)
+	bodies := make([]string, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+			headers[i] = rec.Header().Get("X-Request-ID")
+			bodies[i] = rec.Body.String()
+		}(i)
+	}
+	wg.Wait()
+
+	seen := map[string]bool{}
+	for i := 0; i < n; i++ {
+		if headers[i] == "" || bodies[i] == "" {
+			t.Fatalf("request %d: header %q body %q", i, headers[i], bodies[i])
+		}
+		if headers[i] != bodies[i] {
+			t.Fatalf("request %d: header %q but handler saw %q", i, headers[i], bodies[i])
+		}
+		if seen[headers[i]] {
+			t.Fatalf("request %d reused request id %q", i, headers[i])
+		}
+		seen[headers[i]] = true
 	}
 }
 `,
@@ -2651,6 +3599,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 )
 
@@ -2735,6 +3684,264 @@ func TestLogReadsRequestID(t *testing.T) {
 
 	if got[0].RequestID != "req-9" {
 		t.Fatalf("logged request id = %q, want req-9", got[0].RequestID)
+	}
+}
+
+func TestStatusRecorderFirstStatusWins(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sr := &statusRecorder{ResponseWriter: rec}
+
+	sr.WriteHeader(http.StatusCreated)
+	sr.WriteHeader(http.StatusInternalServerError)
+
+	if !sr.Wrote {
+		t.Fatal("Wrote = false after WriteHeader")
+	}
+	if sr.Status != http.StatusCreated {
+		t.Fatalf("Status = %d, want the first status 201", sr.Status)
+	}
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("underlying recorder code = %d, want 201", rec.Code)
+	}
+}
+
+func TestStatusRecorderWriteAfterHeader(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sr := &statusRecorder{ResponseWriter: rec}
+
+	sr.WriteHeader(http.StatusAccepted)
+	n, err := sr.Write([]byte("body"))
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if n != 4 {
+		t.Fatalf("Write returned %d, want 4", n)
+	}
+	if sr.Status != http.StatusAccepted {
+		t.Fatalf("Status = %d, want 202", sr.Status)
+	}
+	if rec.Body.String() != "body" {
+		t.Fatalf("body = %q, want body", rec.Body.String())
+	}
+}
+
+func TestStatusRecorderWriteTwice(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sr := &statusRecorder{ResponseWriter: rec}
+
+	if _, err := sr.Write([]byte("a")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sr.Write([]byte("b")); err != nil {
+		t.Fatal(err)
+	}
+
+	if !sr.Wrote || sr.Status != http.StatusOK {
+		t.Fatalf("Wrote = %v, Status = %d, want true/200", sr.Wrote, sr.Status)
+	}
+	if rec.Body.String() != "ab" {
+		t.Fatalf("body = %q, want ab", rec.Body.String())
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("underlying recorder code = %d, want 200", rec.Code)
+	}
+}
+
+func TestMiddlewareStatuses(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"created", http.StatusCreated, "created"},
+		{"no content", http.StatusNoContent, ""},
+		{"bad request", http.StatusBadRequest, "bad"},
+		{"not found", http.StatusNotFound, ""},
+		{"server error", http.StatusInternalServerError, "boom"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var got []LogEntry
+			h := Middleware(func(e LogEntry) { got = append(got, e) })(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(tc.status)
+					if tc.body != "" {
+						_, _ = w.Write([]byte(tc.body))
+					}
+				}))
+
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+
+			if rec.Code != tc.status {
+				t.Fatalf("recorder status = %d, want %d", rec.Code, tc.status)
+			}
+			if rec.Body.String() != tc.body {
+				t.Fatalf("body = %q, want %q", rec.Body.String(), tc.body)
+			}
+			if len(got) != 1 {
+				t.Fatalf("log called %d times, want 1", len(got))
+			}
+			if got[0].Status != tc.status {
+				t.Fatalf("logged status = %d, want %d", got[0].Status, tc.status)
+			}
+		})
+	}
+}
+
+func TestMiddlewareLogsPathWithoutQuery(t *testing.T) {
+	var got []LogEntry
+	h := Middleware(func(e LogEntry) { got = append(got, e) })(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/a/b?x=1&y=2", nil))
+
+	if len(got) != 1 {
+		t.Fatalf("log called %d times, want 1", len(got))
+	}
+	if got[0].Path != "/a/b" {
+		t.Fatalf("logged path = %q, want /a/b", got[0].Path)
+	}
+	if got[0].Method != http.MethodGet {
+		t.Fatalf("logged method = %q, want GET", got[0].Method)
+	}
+}
+
+func TestMiddlewareLogsAfterHandler(t *testing.T) {
+	handlerDone := false
+	var logged bool
+	h := Middleware(func(e LogEntry) {
+		logged = true
+		if !handlerDone {
+			t.Error("the log callback ran before the handler finished")
+		}
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerDone = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if !logged {
+		t.Fatal("the log callback was not called")
+	}
+}
+
+func TestMiddlewareMissingRequestID(t *testing.T) {
+	var got []LogEntry
+	h := Middleware(func(e LogEntry) { got = append(got, e) })(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if got[0].RequestID != "" {
+		t.Fatalf("logged request id = %q, want an empty string", got[0].RequestID)
+	}
+}
+
+func TestMiddlewarePreservesHeadersAndBody(t *testing.T) {
+	var got []LogEntry
+	h := Middleware(func(e LogEntry) { got = append(got, e) })(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Custom", "yes")
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte("{\"ok\":true}"))
+		}))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/x", nil))
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	if rec.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("Content-Type = %q", rec.Header().Get("Content-Type"))
+	}
+	if rec.Header().Get("X-Custom") != "yes" {
+		t.Fatalf("X-Custom = %q", rec.Header().Get("X-Custom"))
+	}
+	if rec.Body.String() != "{\"ok\":true}" {
+		t.Fatalf("body = %q", rec.Body.String())
+	}
+	if got[0].Status != http.StatusAccepted {
+		t.Fatalf("logged status = %d, want 202", got[0].Status)
+	}
+}
+
+func TestMiddlewareMultipleRequests(t *testing.T) {
+	var got []LogEntry
+	h := Middleware(func(e LogEntry) { got = append(got, e) })(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/created":
+				w.WriteHeader(http.StatusCreated)
+			case "/missing":
+				w.WriteHeader(http.StatusNotFound)
+			default:
+				w.WriteHeader(http.StatusOK)
+			}
+		}))
+
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/created", nil))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/missing", nil))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodDelete, "/other", nil))
+
+	if len(got) != 3 {
+		t.Fatalf("log called %d times, want 3", len(got))
+	}
+	wantStatuses := []int{http.StatusCreated, http.StatusNotFound, http.StatusOK}
+	wantMethods := []string{http.MethodGet, http.MethodPost, http.MethodDelete}
+	wantPaths := []string{"/created", "/missing", "/other"}
+	for i := range got {
+		if got[i].Status != wantStatuses[i] || got[i].Method != wantMethods[i] || got[i].Path != wantPaths[i] {
+			t.Fatalf("entry %d = %+v, want status %d method %s path %s", i, got[i], wantStatuses[i], wantMethods[i], wantPaths[i])
+		}
+	}
+}
+
+func TestMiddlewareConcurrent(t *testing.T) {
+	const n = 30
+	var mu sync.Mutex
+	var entries []LogEntry
+	h := Middleware(func(e LogEntry) {
+		mu.Lock()
+		entries = append(entries, e)
+		mu.Unlock()
+	})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+			if rec.Code != http.StatusOK {
+				t.Errorf("concurrent request status = %d, want 200", rec.Code)
+			}
+		}()
+	}
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(entries) != n {
+		t.Fatalf("log called %d times, want %d", len(entries), n)
+	}
+	for i, e := range entries {
+		if e.Status != http.StatusOK {
+			t.Fatalf("entry %d status = %d, want 200", i, e.Status)
+		}
 	}
 }
 `,
@@ -3101,6 +4308,7 @@ func main() {
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -3178,6 +4386,183 @@ func TestGetJSONRespectsContext(t *testing.T) {
 func TestGetJSONUnreachable(t *testing.T) {
 	if err := GetJSON(context.Background(), &http.Client{Timeout: time.Second}, "http://127.0.0.1:1/", &payload{}); err == nil {
 		t.Fatal("an unreachable server should produce an error")
+	}
+}
+
+func TestGetJSONStatusTable(t *testing.T) {
+	statuses := []int{
+		http.StatusMovedPermanently,
+		http.StatusBadRequest,
+		http.StatusUnauthorized,
+		http.StatusNotFound,
+		http.StatusTeapot,
+		http.StatusInternalServerError,
+	}
+	for _, status := range statuses {
+		status := status
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+				fmt.Fprint(w, "failure-detail")
+			}))
+			defer srv.Close()
+
+			err := GetJSON(context.Background(), srv.Client(), srv.URL, &payload{})
+			if err == nil {
+				t.Fatalf("status %d should be an error", status)
+			}
+			if !strings.Contains(err.Error(), fmt.Sprint(status)) {
+				t.Fatalf("the error should mention status %d: %v", status, err)
+			}
+			if !strings.Contains(err.Error(), "failure-detail") {
+				t.Fatalf("the error should include a slice of the body: %v", err)
+			}
+		})
+	}
+}
+
+func TestGetJSON2xxBoundaries(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusCreated, 299} {
+		status := status
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+				fmt.Fprint(w, "{\"name\":\"Ada\",\"age\":36}")
+			}))
+			defer srv.Close()
+
+			var got payload
+			if err := GetJSON(context.Background(), srv.Client(), srv.URL, &got); err != nil {
+				t.Fatalf("status %d: GetJSON: %v", status, err)
+			}
+			if got.Name != "Ada" || got.Age != 36 {
+				t.Fatalf("status %d: decoded %+v", status, got)
+			}
+		})
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(300)
+		fmt.Fprint(w, "{\"name\":\"Ada\"}")
+	}))
+	defer srv.Close()
+
+	if err := GetJSON(context.Background(), srv.Client(), srv.URL, &payload{}); err == nil {
+		t.Fatal("a 300 response is outside 200-299 and should be an error")
+	}
+}
+
+func TestGetJSONErrorBodyIsBounded(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, strings.Repeat("x", 100000))
+	}))
+	defer srv.Close()
+
+	err := GetJSON(context.Background(), srv.Client(), srv.URL, &payload{})
+	if err == nil {
+		t.Fatal("a 500 response should be an error")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Fatalf("the error should mention the status: %v", err)
+	}
+	if len(err.Error()) > 4096 {
+		t.Fatalf("the error embeds too much of the body (%d bytes)", len(err.Error()))
+	}
+}
+
+func TestGetJSONEmptyBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	if err := GetJSON(context.Background(), srv.Client(), srv.URL, &payload{}); err == nil {
+		t.Fatal("an empty 200 body should produce a decode error")
+	}
+}
+
+func TestGetJSONUnknownFieldsAreIgnored(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "{\"name\":\"Ada\",\"age\":36,\"extra\":{\"deep\":true},\"more\":[1,2,3]}")
+	}))
+	defer srv.Close()
+
+	var got payload
+	if err := GetJSON(context.Background(), srv.Client(), srv.URL, &got); err != nil {
+		t.Fatalf("GetJSON: %v", err)
+	}
+	if got.Name != "Ada" || got.Age != 36 {
+		t.Fatalf("decoded %+v", got)
+	}
+}
+
+func TestGetJSONRequestMethod(t *testing.T) {
+	methods := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods <- r.Method
+		fmt.Fprint(w, "{\"name\":\"Ada\"}")
+	}))
+	defer srv.Close()
+
+	var got payload
+	if err := GetJSON(context.Background(), srv.Client(), srv.URL, &got); err != nil {
+		t.Fatalf("GetJSON: %v", err)
+	}
+	if method := <-methods; method != http.MethodGet {
+		t.Fatalf("method = %s, want GET", method)
+	}
+}
+
+func TestGetJSONCanceledContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "{}")
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := GetJSON(ctx, srv.Client(), srv.URL, &payload{})
+	if err == nil {
+		t.Fatal("a canceled context should produce an error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("the cancellation cause was lost: %v", err)
+	}
+}
+
+func TestGetJSONDeadlineIsWrapped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		fmt.Fprint(w, "{}")
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err := GetJSON(ctx, srv.Client(), srv.URL, &payload{})
+	if err == nil {
+		t.Fatal("a timed out request should produce an error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("the deadline cause was lost: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("the call ignored the context deadline (%v)", elapsed)
+	}
+}
+
+func TestGetJSONInvalidURLs(t *testing.T) {
+	for _, rawURL := range []string{"://bad", "http://[::1", "http://%zz"} {
+		rawURL := rawURL
+		t.Run(rawURL, func(t *testing.T) {
+			if err := GetJSON(context.Background(), http.DefaultClient, rawURL, &payload{}); err == nil {
+				t.Fatalf("URL %q should produce an error", rawURL)
+			}
+		})
 	}
 }
 `,
@@ -3304,6 +4689,7 @@ func main() {
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -3434,6 +4820,370 @@ func TestFetchAllEmpty(t *testing.T) {
 	}
 	if got == nil || len(got) != 0 {
 		t.Fatalf("FetchAll(nil) = %v, want an empty non-nil slice", got)
+	}
+}
+
+type postPayload struct {
+	Name  string §json:"name"§
+	Count int    §json:"count"§
+}
+
+func TestPostJSONRequestContents(t *testing.T) {
+	inputs := []postPayload{
+		{Name: "ada", Count: 1},
+		{Name: "", Count: 0},
+		{Name: "unicode-\u00f1", Count: -3},
+		{Name: "with \"quotes\"", Count: 99},
+	}
+
+	for _, in := range inputs {
+		in := in
+		t.Run(fmt.Sprintf("%q/%d", in.Name, in.Count), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					http.Error(w, "method", http.StatusMethodNotAllowed)
+					return
+				}
+				if ct := r.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+					http.Error(w, "content type", http.StatusUnsupportedMediaType)
+					return
+				}
+				var got postPayload
+				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+					http.Error(w, "body", http.StatusBadRequest)
+					return
+				}
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(got)
+			}))
+			defer srv.Close()
+
+			var out postPayload
+			if err := PostJSON(context.Background(), srv.Client(), srv.URL, in, &out); err != nil {
+				t.Fatalf("PostJSON: %v", err)
+			}
+			if out != in {
+				t.Fatalf("echoed %+v, want %+v", out, in)
+			}
+		})
+	}
+}
+
+func TestPostJSONOutZeroFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "{}")
+	}))
+	defer srv.Close()
+
+	var out postPayload
+	if err := PostJSON(context.Background(), srv.Client(), srv.URL, map[string]string{"a": "b"}, &out); err != nil {
+		t.Fatalf("PostJSON: %v", err)
+	}
+	if out != (postPayload{}) {
+		t.Fatalf("out = %+v, want the zero value", out)
+	}
+}
+
+func TestPostJSONEmptyResponseBodyWithOut(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	var out postPayload
+	if err := PostJSON(context.Background(), srv.Client(), srv.URL, map[string]string{}, &out); err == nil {
+		t.Fatal("an empty 200 body with a non-nil out should be a decode error")
+	}
+}
+
+func TestPostJSONStatusTable(t *testing.T) {
+	statuses := []int{300, http.StatusBadRequest, http.StatusNotFound, http.StatusTeapot, http.StatusInternalServerError}
+	for _, status := range statuses {
+		status := status
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+				fmt.Fprint(w, "failure-detail")
+			}))
+			defer srv.Close()
+
+			err := PostJSON(context.Background(), srv.Client(), srv.URL, map[string]string{}, nil)
+			if err == nil {
+				t.Fatalf("status %d should be an error", status)
+			}
+			if !strings.Contains(err.Error(), fmt.Sprint(status)) {
+				t.Fatalf("the error should mention status %d: %v", status, err)
+			}
+			if !strings.Contains(err.Error(), "failure-detail") {
+				t.Fatalf("the error should include a slice of the body: %v", err)
+			}
+		})
+	}
+}
+
+func TestPostJSON299IsSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(299)
+		fmt.Fprint(w, "{\"echo\":\"ok\"}")
+	}))
+	defer srv.Close()
+
+	var out map[string]string
+	if err := PostJSON(context.Background(), srv.Client(), srv.URL, map[string]string{}, &out); err != nil {
+		t.Fatalf("PostJSON: %v", err)
+	}
+	if out["echo"] != "ok" {
+		t.Fatalf("response = %v", out)
+	}
+}
+
+func TestPostJSONMarshalError(t *testing.T) {
+	err := PostJSON(context.Background(), http.DefaultClient, "http://127.0.0.1:1/", make(chan int), nil)
+	if err == nil {
+		t.Fatal("an unmarshalable request body should produce an error")
+	}
+}
+
+func TestPostJSONInvalidURL(t *testing.T) {
+	if err := PostJSON(context.Background(), http.DefaultClient, "://bad", map[string]string{}, nil); err == nil {
+		t.Fatal("an invalid URL should produce an error")
+	}
+}
+
+func TestPostJSONCanceledContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "{}")
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := PostJSON(ctx, srv.Client(), srv.URL, map[string]string{}, nil)
+	if err == nil {
+		t.Fatal("a canceled context should produce an error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("the cancellation cause was lost: %v", err)
+	}
+}
+
+func TestPostJSONDeadline(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		fmt.Fprint(w, "{}")
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err := PostJSON(ctx, srv.Client(), srv.URL, map[string]string{}, nil)
+	if err == nil {
+		t.Fatal("a timed out request should produce an error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("the deadline cause was lost: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("the call ignored the context deadline (%v)", elapsed)
+	}
+}
+
+func TestPostJSONErrorBodyIsBounded(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, strings.Repeat("x", 100000))
+	}))
+	defer srv.Close()
+
+	err := PostJSON(context.Background(), srv.Client(), srv.URL, map[string]string{}, nil)
+	if err == nil {
+		t.Fatal("a 500 response should be an error")
+	}
+	if !strings.Contains(err.Error(), "500") {
+		t.Fatalf("the error should mention the status: %v", err)
+	}
+	if len(err.Error()) > 4096 {
+		t.Fatalf("the error embeds too much of the body (%d bytes)", len(err.Error()))
+	}
+}
+
+func TestPostJSONNilOutSkipsDecode(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "this is not json")
+	}))
+	defer srv.Close()
+
+	if err := PostJSON(context.Background(), srv.Client(), srv.URL, map[string]string{}, nil); err != nil {
+		t.Fatalf("PostJSON with nil out should not decode the body: %v", err)
+	}
+}
+
+func TestFetchAllOrderMany(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "body:%s", r.URL.Path)
+	}))
+	defer srv.Close()
+
+	paths := []string{"/p/9", "/p/3", "/p/7", "/p/1", "/p/8", "/p/0", "/p/6", "/p/2"}
+	urls := make([]string, len(paths))
+	want := make([]string, len(paths))
+	for i, path := range paths {
+		urls[i] = srv.URL + path
+		want[i] = "body:" + path
+	}
+
+	got, err := FetchAll(context.Background(), srv.Client(), urls)
+	if err != nil {
+		t.Fatalf("FetchAll: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("FetchAll returned %d bodies, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("result %d = %q, want %q (results must stay in input order)", i, got[i], want[i])
+		}
+	}
+}
+
+func TestFetchAllSingle(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "only")
+	}))
+	defer srv.Close()
+
+	got, err := FetchAll(context.Background(), srv.Client(), []string{srv.URL})
+	if err != nil {
+		t.Fatalf("FetchAll: %v", err)
+	}
+	if len(got) != 1 || got[0] != "only" {
+		t.Fatalf("FetchAll = %v, want [only]", got)
+	}
+}
+
+func TestFetchAllEmptySliceIsNonNil(t *testing.T) {
+	got, err := FetchAll(context.Background(), http.DefaultClient, []string{})
+	if err != nil {
+		t.Fatalf("FetchAll(empty) error = %v, want nil", err)
+	}
+	if got == nil || len(got) != 0 {
+		t.Fatalf("FetchAll(empty) = %v, want an empty non-nil slice", got)
+	}
+}
+
+func TestFetchAllNoPartialResults(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/bad" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprint(w, "ok")
+	}))
+	defer srv.Close()
+
+	for _, badPos := range []int{0, 1, 2} {
+		badPos := badPos
+		t.Run(fmt.Sprint(badPos), func(t *testing.T) {
+			urls := []string{srv.URL + "/a", srv.URL + "/b", srv.URL + "/c"}
+			urls[badPos] = srv.URL + "/bad"
+
+			got, err := FetchAll(context.Background(), srv.Client(), urls)
+			if err == nil {
+				t.Fatal("a failing URL should make FetchAll return an error")
+			}
+			if got != nil {
+				t.Fatalf("FetchAll returned partial results %v alongside the error", got)
+			}
+		})
+	}
+}
+
+func TestFetchAllStatusBoundaries(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/299":
+			w.WriteHeader(299)
+			fmt.Fprint(w, "ok")
+		case "/300":
+			w.WriteHeader(300)
+			fmt.Fprint(w, "nope")
+		}
+	}))
+	defer srv.Close()
+
+	got, err := FetchAll(context.Background(), srv.Client(), []string{srv.URL + "/299"})
+	if err != nil {
+		t.Fatalf("a 299 response should succeed: %v", err)
+	}
+	if len(got) != 1 || got[0] != "ok" {
+		t.Fatalf("FetchAll = %v, want [ok]", got)
+	}
+
+	if _, err := FetchAll(context.Background(), srv.Client(), []string{srv.URL + "/300"}); err == nil {
+		t.Fatal("a 300 response should be an error")
+	}
+}
+
+func TestFetchAllDuplicateURLs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "same")
+	}))
+	defer srv.Close()
+
+	got, err := FetchAll(context.Background(), srv.Client(), []string{srv.URL, srv.URL})
+	if err != nil {
+		t.Fatalf("FetchAll: %v", err)
+	}
+	if len(got) != 2 || got[0] != "same" || got[1] != "same" {
+		t.Fatalf("FetchAll = %v, want [same same]", got)
+	}
+}
+
+func TestFetchAllEmptyBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	got, err := FetchAll(context.Background(), srv.Client(), []string{srv.URL})
+	if err != nil {
+		t.Fatalf("FetchAll: %v", err)
+	}
+	if len(got) != 1 || got[0] != "" {
+		t.Fatalf("FetchAll = %v, want one empty body", got)
+	}
+}
+
+func TestFetchAllCanceledContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "ok")
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	got, err := FetchAll(ctx, srv.Client(), []string{srv.URL})
+	if err == nil {
+		t.Fatal("a canceled context should produce an error")
+	}
+	if got != nil {
+		t.Fatalf("FetchAll returned %v alongside the error", got)
+	}
+}
+
+func TestFetchAllInvalidURL(t *testing.T) {
+	got, err := FetchAll(context.Background(), http.DefaultClient, []string{"://bad"})
+	if err == nil {
+		t.Fatal("an invalid URL should produce an error")
+	}
+	if got != nil {
+		t.Fatalf("FetchAll returned %v alongside the error", got)
 	}
 }
 `,

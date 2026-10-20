@@ -20,10 +20,11 @@ func TestReferenceSolutions(t *testing.T) {
 	}
 
 	match := os.Getenv("GOTUT_VERIFY_MATCH")
+	matches := strings.Split(match, ",")
 	for _, mod := range curriculum.All() {
 		for _, topic := range mod.Topics {
 			for _, ex := range topic.Exercises {
-				if match != "" && !strings.Contains(ex.ID, match) && !strings.Contains(topic.ID, match) {
+				if match != "" && !matchesExercise(ex.ID, topic.ID, matches) {
 					continue
 				}
 				ex := ex
@@ -61,4 +62,39 @@ func TestReferenceSolutions(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestStarterSolutionsFail(t *testing.T) {
+	if os.Getenv("GOTUT_VERIFY") == "" {
+		t.Skip("set GOTUT_VERIFY=1 to run every starter solution")
+	}
+
+	match := os.Getenv("GOTUT_VERIFY_MATCH")
+	matches := strings.Split(match, ",")
+	for _, mod := range curriculum.All() {
+		for _, topic := range mod.Topics {
+			for _, ex := range topic.Exercises {
+				if match != "" && !matchesExercise(ex.ID, topic.ID, matches) {
+					continue
+				}
+				ex := ex
+				t.Run(ex.ID, func(t *testing.T) {
+					res := executeExercise(&ex, []curriculum.File{{Name: "main.go", Content: ex.Starter}}, "test", "", 0)
+					if res.OK {
+						t.Fatalf("starter code passed the hidden tests; the exercise has no work to do")
+					}
+				})
+			}
+		}
+	}
+}
+
+func matchesExercise(exID, topicID string, matches []string) bool {
+	for _, m := range matches {
+		m = strings.TrimSpace(m)
+		if m != "" && (strings.Contains(exID, m) || strings.Contains(topicID, m)) {
+			return true
+		}
+	}
+	return false
 }
