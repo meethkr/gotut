@@ -885,8 +885,6 @@
 
     bar.appendChild(fileName);
     bar.appendChild(barSpacer);
-    bar.appendChild(runProgramBtn);
-    bar.appendChild(submitBtn);
     bar.appendChild(resetBtn);
     shell.appendChild(bar);
 
@@ -943,6 +941,25 @@
     body.appendChild(highlightPre);
     body.appendChild(editor);
     shell.appendChild(body);
+
+    // The action bar mirrors the file bar at the top of the editor.
+    const footer = document.createElement("div");
+    footer.className = "editor-bar editor-footer";
+
+    const status = document.createElement("div");
+    status.className = "run-status";
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+
+    const footerSpacer = document.createElement("span");
+    footerSpacer.className = "spacer";
+
+    footer.appendChild(status);
+    footer.appendChild(footerSpacer);
+    footer.appendChild(runProgramBtn);
+    footer.appendChild(submitBtn);
+    shell.appendChild(footer);
+
     card.appendChild(shell);
 
     const stdin = document.createElement("textarea");
@@ -950,12 +967,6 @@
     stdin.placeholder = "stdin (optional) — used when you run your program";
     stdin.value = ex.sampleIn || "";
     card.appendChild(stdin);
-
-    const status = document.createElement("div");
-    status.className = "run-status";
-    status.setAttribute("role", "status");
-    status.setAttribute("aria-live", "polite");
-    card.appendChild(status);
 
     const buttons = { runBtn: runProgramBtn, submitBtn: submitBtn };
     runProgram = () => doExecute(entry, "run", editor.value, stdin.value, buttons, status);

@@ -894,37 +894,38 @@ html[data-theme="light"] .editor-shell:focus-within {
   padding: 8px 14px;
   border: 1px solid transparent;
   border-radius: 9px;
+  background-color: transparent;
 }
 .editor-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .run-program-btn {
   color: #79c0ff;
-  background-color: rgba(56, 139, 253, 0.16);
   border-color: rgba(56, 139, 253, 0.45);
 }
-.run-program-btn:hover:not(:disabled) { background-color: rgba(56, 139, 253, 0.28); }
-html[data-theme="light"] .run-program-btn {
-  color: #0969da;
-  background-color: rgba(9, 105, 218, 0.08);
-  border-color: rgba(9, 105, 218, 0.30);
-}
-html[data-theme="light"] .run-program-btn:hover:not(:disabled) { background-color: rgba(9, 105, 218, 0.16); }
+.run-program-btn:hover:not(:disabled) { background-color: rgba(56, 139, 253, 0.10); }
+html[data-theme="light"] .run-program-btn { color: #0969da; border-color: rgba(9, 105, 218, 0.30); }
+html[data-theme="light"] .run-program-btn:hover:not(:disabled) { background-color: rgba(9, 105, 218, 0.07); }
 
 .submit-btn {
   color: var(--ok-text);
-  background-color: var(--ok-soft);
   border-color: var(--ok-border);
 }
-.submit-btn:hover:not(:disabled) { background-color: rgba(63, 185, 80, 0.24); }
-html[data-theme="light"] .submit-btn { color: #1a7f37; background-color: rgba(26, 127, 55, 0.10); border-color: rgba(26, 127, 55, 0.32); }
+.submit-btn:hover:not(:disabled) { background-color: var(--ok-soft); }
+html[data-theme="light"] .submit-btn { color: #1a7f37; border-color: rgba(26, 127, 55, 0.32); }
 
 .reset-btn {
   color: var(--bad-text);
-  background-color: var(--bad-soft);
   border-color: var(--bad-border);
 }
-.reset-btn:hover:not(:disabled) { background-color: rgba(248, 81, 73, 0.24); }
-html[data-theme="light"] .reset-btn { color: #cf222e; background-color: rgba(207, 34, 46, 0.08); border-color: rgba(207, 34, 46, 0.28); }
+.reset-btn:hover:not(:disabled) { background-color: var(--bad-soft); }
+html[data-theme="light"] .reset-btn { color: #cf222e; border-color: rgba(207, 34, 46, 0.28); }
+
+.editor-footer {
+  border-top: 1px solid var(--editor-border);
+  border-bottom: 0;
+  padding: 8px 10px;
+}
+.editor-footer .run-status { margin-top: 0; }
 
 .editor-body {
   position: relative;
