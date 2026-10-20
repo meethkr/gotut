@@ -12,8 +12,8 @@ func module1() Module {
 		Summary: "Learn Go one idea at a time, starting from an empty file. Every concept is introduced with a complete example and its output before you are asked to write anything.",
 		Topics: []Topic{
 			m1t1(),  // hello + packages
-			m1t2(),  // variables & zero values
-			m1t3(),  // types, conversions, constants
+			m1t2(),  // variables & basic types
+			m1t3(),  // zero values, conversions, constants
 			m1t4(),  // formatted I/O
 			m1t5(),  // if & switch
 			m1t6(),  // loops
@@ -445,13 +445,12 @@ func main() {
 func m1t2() Topic {
 	return Topic{
 		ID:      "m1t2",
-		Title:   "Variables and zero values",
-		Summary: "Declaration, assignment, and the zero value every type starts at.",
+		Title:   "Variables and types",
+		Summary: "Declarations, assignment, and the basic types Go gives you.",
 		Theory: `
-Go is statically typed: a variable's type is fixed at compile time, and a variable is
-never left uninitialised. Declaring one without a value zeroes its memory rather than
-leaving it undefined. That default — §0§, §""§, §false§ or §nil§, depending on the type —
-is the type's **zero value**.
+Go is statically typed: a variable's type is fixed at compile time. That sounds
+restrictive, but it is what lets the compiler catch a whole class of mistakes before
+your program runs. This topic is about declaring variables and meeting the basic types.
 
 ## Declaring a variable
 
@@ -484,6 +483,51 @@ var count int = 10
 count := 10
 §§§
 
+A variable declared without a value is not left undefined: Go gives it the **zero
+value** of its type. That is the subject of the next topic, so do not worry about the
+details yet; just know that §var age int§ is already safe to read.
+
+## The basic types you will use
+
+Go has a small set of built-in types, and the compiler never converts between them
+implicitly. The strictness is deliberate: it turns numeric mistakes into compile errors
+rather than silent truncation.
+
+**Whole numbers:**
+
+| Type | Size | Use it for |
+| --- | --- | --- |
+| §int§ | 32 or 64 bits, whichever the machine prefers | **the default. Use this.** |
+| §int8§ §int16§ §int32§ §int64§ | exactly 8/16/32/64 bits | a specific width (files, network protocols) |
+| §uint§, §uint8§ … §uint64§ | the same, but never negative | bit manipulation, byte buffers |
+| §byte§ | exactly 8 bits | raw data; a **nickname for §uint8§** |
+| §rune§ | exactly 32 bits | one Unicode character; a **nickname for §int32§** |
+
+**Numbers with a decimal point:**
+
+| Type | Notes |
+| --- | --- |
+| §float64§ | 64-bit. **Use this one.** It is the default for §1.5§ |
+| §float32§ | 32-bit, less precise, half the memory |
+
+**Other:**
+
+| Type | Notes |
+| --- | --- |
+| §bool§ | §true§ or §false§ — nothing else, no 0/1 |
+| §string§ | text; it gets its own topic later |
+| §complex64§, §complex128§ | complex numbers with §i§; rarely needed |
+
+Two nicknames worth memorising, because the standard library uses them constantly:
+
+* §byte§ is exactly §uint8§.
+* §rune§ is exactly §int32§.
+
+§:=§ infers one of these types from the value on the right:
+§10§ becomes an §int§, §1.5§ becomes a §float64§, §"hi"§ becomes a §string§, and
+§true§ becomes a §bool§. If you need a different numeric type, say so explicitly —
+§var ratio float64 = 1§ — because the compiler will not convert for you.
+
 A complete program:
 
 §§§go
@@ -507,54 +551,6 @@ Oslo has 709037 people
 
 The commas in §fmt.Println(a, b, c)§ put a single space between each value. We will do
 much better than that in the formatted-output topic.
-
-## Zero values
-
-Where Java leaves an uninitialised §Integer§ field as §null§ — and throws when you read
-it — Go defines a value for every type:
-
-> **Every variable is initialised. If you do not give a value, Go gives you the zero
-> value of that type.**
-
-So §var age int§ does not leave §age§ "empty" — it sets it to §0§. This is one of the
-reasons Go programs crash less: there is no "uninitialised" state to trip over.
-
-| Type | Zero value | Notes |
-| --- | --- | --- |
-| §int§, §int8§, §int64§, §uint§ … | §0§ | all number types start at zero |
-| §float64§, §float32§ | §0§ | the same number as §0.0§ |
-| §bool§ | §false§ | |
-| §string§ | §""§ | an empty string, not §nil§ |
-| pointer (§*T§) | §nil§ | "points at nothing" |
-| slice, map, channel | §nil§ | an empty collection |
-| struct | a struct whose every field is the zero value | |
-| array of N things | N zero values | |
-
-Every type has one:
-
-§§§go
-package main
-
-import "fmt"
-
-func main() {
-	var i int
-	var f float64
-	var b bool
-	var s string
-
-	fmt.Printf("%d %v %v %q\n", i, f, b, s)
-}
-§§§
-
-Output:
-
-§§§text
-0 0 false ""
-§§§
-
-§%q§ prints a string with quotation marks so you can *see* that it is empty rather
-than missing. We meet all the percent verbs in the next topic.
 
 ## Declaring several at once
 
@@ -593,36 +589,6 @@ result, err := doThing() // both new
 next, err := doOther()   // next is new, so := is fine and err is reused
 §§§
 
-## Why zero values matter
-
-Because every type has a usable zero value, structs are ready to use the moment they
-are declared. There is no constructor required just to avoid a crash:
-
-§§§go
-package main
-
-import "fmt"
-
-type Config struct {
-	Host string
-	Port int
-}
-
-func main() {
-	var c Config                   // no constructor, no nil
-	fmt.Println(c.Host, c.Port)    // prints an empty string and 0
-	c.Port = 8080
-	fmt.Println(c.Port)
-}
-§§§
-
-Output:
-
-§§§text
- 0
-8080
-§§§
-
 ## Two rules
 
 * §:=§ creates; §=§ assigns. §:=§ only works inside a function.
@@ -632,25 +598,18 @@ Output:
 		Quiz: []Question{
 			{
 				ID:     "m1t2q1",
-				Prompt: "What does this program print?",
-				Code: `package main
-
-import "fmt"
-
-func main() {
-	var i int
-	var s string
-	var b bool
-	var f float64
-	fmt.Println(i, s == "", b, f)
-}`,
+				Prompt: "What type does Go infer for each variable?",
+				Code: `count := 10
+ratio := 1.5
+name := "Ada"
+ok := true`,
 				Options: []Option{
-					{Text: "§0 true false 0§", Correct: true, Rationale: "Zero values: §0§, §\"\"§, §false§, §0§. We print §s == \"\"§ to show the empty string compares equal to §\"\"§."},
-					{Text: "§0 <nil> false 0§", Correct: false, Rationale: "A string's zero value is §\"\"§, never §nil§. Only pointers, slices, maps and channels can be §nil§."},
-					{Text: "It does not compile: the variables are never assigned.", Correct: false, Rationale: "Declaring and then using a variable in §Println§ is enough; Go initialises it for you."},
-					{Text: "§<nil> <nil> <nil> <nil>§", Correct: false, Rationale: "§int§, §string§, §bool§ and §float64§ cannot be §nil§ at all."},
+					{Text: "§count§ is §int§, §ratio§ is §float64§, §name§ is §string§, §ok§ is §bool§.", Correct: true, Rationale: "Short declarations infer a type from the literal on the right. Whole numbers become §int§ and decimals become §float64§ by default."},
+					{Text: "§count§ is §int§, §ratio§ is §float32§, §name§ is §string§, §ok§ is §bool§.", Correct: false, Rationale: "A decimal literal such as §1.5§ is a §float64§ by default, not a §float32§."},
+					{Text: "All four are §interface{}§ until they are used.", Correct: false, Rationale: "Go infers a concrete type at the declaration. Interface types are not the default."},
+					{Text: "It does not compile: every variable needs an explicit type.", Correct: false, Rationale: "§:=§ exists precisely so you can omit the type when the value makes it obvious."},
 				},
-				Explanation: "Every Go type has a defined zero value. Numbers are 0, booleans false, strings \"\" — and the program compiles because the variables are used.",
+				Explanation: "§:=§ creates a variable and infers its type from the right-hand side: §10§ → §int§, §1.5§ → §float64§, a quoted literal → §string§, and §true§/§false§ → §bool§.",
 			},
 			{
 				ID:     "m1t2q2",
@@ -676,88 +635,19 @@ func main() {
 			},
 			{
 				ID:     "m1t2q3",
-				Prompt: "A §var xs []int§ is declared and never given a value. What can you safely do with it?",
+				Prompt: "Which declarations are valid at the top level of a file (outside any function)? Select all that apply.",
+				Multi:  true,
 				Options: []Option{
-					{Text: "Read its length (0), range over it (zero iterations), and §xs = append(xs, 1)§ to add an element.", Correct: true, Rationale: "A nil slice behaves like an empty one for reading, and append on a nil slice is legal — it allocates."},
-					{Text: "Nothing — it is §nil§ and any use panics.", Correct: false, Rationale: "Reading is safe; only writing by index would panic."},
-					{Text: "§xs[0] = 1§ works because Go grows it automatically.", Correct: false, Rationale: "Indexing past the length panics; use §append§."},
-					{Text: "§len(xs)§ panics because the slice is nil.", Correct: false, Rationale: "§len§ of a nil slice is 0."},
+					{Text: "§var count = 10§", Correct: true, Rationale: "§var§ works both at file level and inside functions."},
+					{Text: "§count := 10§", Correct: false, Rationale: "§:=§ is only allowed inside a function. At file level you must write §var§."},
+					{Text: "§var name string = \"Ada\"§", Correct: true, Rationale: "A typed declaration with a starting value is valid anywhere."},
+					{Text: "§var x, y int = 3, 4§", Correct: true, Rationale: "Several variables can share one declaration, with one value each."},
+					{Text: "§x, y := 3, 4§", Correct: false, Rationale: "Same rule: short declarations are function-only."},
 				},
-				Explanation: "Nil slices (and nil maps) are readable. A nil *map* panics on write, but a nil slice is fine because §append§ returns a new slice.",
+				Explanation: "At package level use §var§ (or §const§). §:=§ is a statement, so it only makes sense inside a function body.",
 			},
 		},
 		Exercises: []Exercise{
-			{
-				ID:    "m1t2e1",
-				Title: "Warm-up: return the zero values",
-				Prompt: `Declare four variables with §var§ — an §int§, a §string§, a §bool§ and a §float64§
-— and return them *without ever assigning a value*. Let Go's zero values do the work.
-
-§§§go
-func ZeroValues() (int, string, bool, float64)
-§§§
-
-The test expects §0, "", false, 0§.
-`,
-				Starter: `package main
-
-import "fmt"
-
-// ZeroValues returns the zero value of each of the four types.
-func ZeroValues() (int, string, bool, float64) {
-	// TODO: declare the variables with var and return them
-	return 0, "", false, 0
-}
-
-func main() {
-	fmt.Println(ZeroValues())
-}
-`,
-				Tests: []File{{
-					Name: "zerovalues_test.go",
-					Content: `package main
-
-import "testing"
-
-func TestZeroValues(t *testing.T) {
-	i, s, b, f := ZeroValues()
-	if i != 0 {
-		t.Errorf("int zero value = %d, want 0", i)
-	}
-	if s != "" {
-		t.Errorf("string zero value = %q, want empty", s)
-	}
-	if b != false {
-		t.Errorf("bool zero value = %v, want false", b)
-	}
-	if f != 0 {
-		t.Errorf("float64 zero value = %v, want 0", f)
-	}
-}
-`,
-				}},
-				Hints: []string{
-					"§var i int§ declares an int and Go sets it to 0 for you.",
-					"You can return all four at once: §return i, s, b, f§.",
-					"Do not write §i := 0§ — this exercise is about the zero value.",
-				},
-				Solution: `package main
-
-import "fmt"
-
-func ZeroValues() (int, string, bool, float64) {
-	var i int
-	var s string
-	var b bool
-	var f float64
-	return i, s, b, f
-}
-
-func main() {
-	fmt.Println(ZeroValues())
-}
-`,
-			},
 			{
 				ID:    "m1t2e2",
 				Title: "Swap two values",
@@ -923,44 +813,105 @@ func main() {
 func m1t3() Topic {
 	return Topic{
 		ID:      "m1t3",
-		Title:   "Basic types, conversions and constants",
-		Summary: "The number types, converting between them, and values that never change.",
+		Title:   "Zero values, conversions and constants",
+		Summary: "The value every type starts at, converting between types, and values that never change.",
 		Theory: `
-Go has a small set of built-in types, and it never converts between them implicitly.
-The strictness is deliberate: it turns numeric mistakes into compile errors rather than
-silent truncation.
+Go initialises every variable. If you do not give it a value, you get the type's
+**zero value** — never an undefined state. That single rule removes a whole class of
+crashes. This topic starts with zero values, then covers converting between types and
+values that never change.
 
-## The basic types
+## Zero values
 
-**Whole numbers:**
+Where Java leaves an uninitialised §Integer§ field as §null§ — and throws when you read
+it — Go defines a value for every type:
 
-| Type | Size | Use it for |
+> **Every variable is initialised. If you do not give a value, Go gives you the zero
+> value of that type.**
+
+So §var age int§ does not leave §age§ "empty" — it sets it to §0§. There is no
+"uninitialised" state to trip over.
+
+| Type | Zero value | Notes |
 | --- | --- | --- |
-| §int§ | 32 or 64 bits, whichever the machine prefers | **the default. Use this.** |
-| §int8§ §int16§ §int32§ §int64§ | exactly 8/16/32/64 bits | a specific width (files, network protocols) |
-| §uint§, §uint8§ … §uint64§ | the same, but never negative | bit manipulation, byte buffers |
-| §byte§ | exactly 8 bits | raw data; a **nickname for §uint8§** |
-| §rune§ | exactly 32 bits | one Unicode character; a **nickname for §int32§** |
+| §int§, §int8§, §int64§, §uint§ … | §0§ | all number types start at zero |
+| §float64§, §float32§ | §0§ | the same number as §0.0§ |
+| §bool§ | §false§ | |
+| §string§ | §""§ | an empty string, not §nil§ |
+| pointer (§*T§) | §nil§ | "points at nothing" |
+| slice, map, channel | §nil§ | an empty collection |
+| struct | a struct whose every field is the zero value | |
+| array of N things | N zero values | |
 
-**Numbers with a decimal point:**
+Every type has one:
 
-| Type | Notes |
-| --- | --- |
-| §float64§ | 64-bit. **Use this one.** It is the default for §1.5§ |
-| §float32§ | 32-bit, less precise, half the memory |
+§§§go
+package main
 
-**Other:**
+import "fmt"
 
-| Type | Notes |
-| --- | --- |
-| §bool§ | §true§ or §false§ — nothing else, no 0/1 |
-| §string§ | text; it gets its own topic later |
-| §complex64§, §complex128§ | complex numbers with §i§; rarely needed |
+func main() {
+	var i int
+	var f float64
+	var b bool
+	var s string
 
-Two nicknames worth memorising, because the standard library uses them constantly:
+	fmt.Printf("%d %v %v %q\n", i, f, b, s)
+}
+§§§
 
-* §byte§ is exactly §uint8§.
-* §rune§ is exactly §int32§.
+Output:
+
+§§§text
+0 0 false ""
+§§§
+
+§%q§ prints a string with quotation marks so you can *see* that it is empty rather
+than missing. We meet all the percent verbs in the next topic.
+
+### A zero value is usable
+
+Because every type has a usable zero value, structs are ready to use the moment they
+are declared. There is no constructor required just to avoid a crash:
+
+§§§go
+package main
+
+import "fmt"
+
+type Config struct {
+	Host string
+	Port int
+}
+
+func main() {
+	var c Config                // no constructor, no nil
+	fmt.Println(c.Host, c.Port) // prints an empty string and 0
+	c.Port = 8080
+	fmt.Println(c.Port)
+}
+§§§
+
+Output:
+
+§§§text
+ 0
+8080
+§§§
+
+The same is true of slices. A nil slice has length §0§, ranges zero times, and works
+with §append§:
+
+§§§go
+var xs []int
+fmt.Println(len(xs))     // 0
+xs = append(xs, 1)       // fine: append allocates
+§§§
+
+Reading a nil slice is safe. Writing through an index that does not exist — §xs[0] = 1§
+on an empty slice — still panics, because there is no element there. A nil *map* is
+different: reading from it is safe, but assigning into it panics. Use §make§ to create
+a map you intend to write to.
 
 ## Conversion: Go never does it for you
 
@@ -1069,68 +1020,51 @@ var c int32 = Num   // also fine
 A *variable* could never do that. This is why §const§ is more flexible than §var§ for
 fixed values, and why §total := price * 3§ just works.
 
-## iota: numbering things in a row
-
-An **enumeration** is a set of named values — the days of the week, the states of an
-order. Go has no §enum§ keyword; the idiom is a §const§ block using §iota§.
-
-§iota§ is a counter that starts at 0 in every §const§ block and goes up by one on every
-line:
-
-§§§go
-package main
-
-import "fmt"
-
-type Weekday int
-
-const (
-	Sunday Weekday = iota // 0
-	Monday                // 1  (the expression "Weekday = iota" is implied)
-	Tuesday               // 2
-	Wednesday             // 3
-)
-
-func main() {
-	fmt.Println(Sunday, Monday, Wednesday)
-}
-§§§
-
-Output:
-
-§§§text
-0 1 3
-§§§
-
-Notice §type Weekday int§: we invented a **named type**. §Weekday§ is still an §int§
-underneath, but the compiler now treats it as its own type, which makes function
-signatures self-documenting and stops you passing a plain §int§ by mistake.
-
-§iota§ can also do arithmetic:
-
-§§§go
-const (
-	KB = 1 << (10 * (iota + 1)) // 1 shifted left 10 places = 1024
-	MB                          // 1 shifted left 20 places = 1048576
-	GB                          // 1 shifted left 30 places
-)
-§§§
-
-§<<§ is "shift left", which multiplies by 2 that many times. If that is new to you,
-just read §1 << 10§ as "1 shifted ten places left", which is 1024.
-
 ## Summary of the surprises
 
-* §int§ is the default whole number; §float64§ is the default decimal number.
-* §byte§ = §uint8§, §rune§ = §int32§.
+* Every type has a zero value: numbers are §0§, strings §""§, booleans §false§, and
+  pointers/slices/maps are §nil§.
+* Zero values are usable: a zero struct and a nil slice need no constructor.
 * Conversion is always explicit: §float64(x)§.
 * §int(9.99)§ gives §9§ — conversion truncates.
 * Constants are untyped and adapt to context; variables do not.
-* §iota§ builds enumerations inside a §const§ block.
 `,
 		Quiz: []Question{
 			{
 				ID:     "m1t3q1",
+				Prompt: "What does this program print?",
+				Code: `package main
+
+import "fmt"
+
+func main() {
+	var i int
+	var s string
+	var b bool
+	var f float64
+	fmt.Println(i, s == "", b, f)
+}`,
+				Options: []Option{
+					{Text: "§0 true false 0§", Correct: true, Rationale: "Zero values: §0§, §\"\"§, §false§, §0§. We print §s == \"\"§ to show the empty string compares equal to §\"\"§."},
+					{Text: "§0 <nil> false 0§", Correct: false, Rationale: "A string's zero value is §\"\"§, never §nil§. Only pointers, slices, maps and channels can be §nil§."},
+					{Text: "It does not compile: the variables are never assigned.", Correct: false, Rationale: "Declaring and then using a variable in §Println§ is enough; Go initialises it for you."},
+					{Text: "§<nil> <nil> <nil> <nil>§", Correct: false, Rationale: "§int§, §string§, §bool§ and §float64§ cannot be §nil§ at all."},
+				},
+				Explanation: "Every Go type has a defined zero value. Numbers are 0, booleans false, strings \"\" — and the program compiles because the variables are used.",
+			},
+			{
+				ID:     "m1t3q2",
+				Prompt: "A §var xs []int§ is declared and never given a value. What can you safely do with it?",
+				Options: []Option{
+					{Text: "Read its length (0), range over it (zero iterations), and §xs = append(xs, 1)§ to add an element.", Correct: true, Rationale: "A nil slice behaves like an empty one for reading, and append on a nil slice is legal — it allocates."},
+					{Text: "Nothing — it is §nil§ and any use panics.", Correct: false, Rationale: "Reading is safe; only writing by index would panic."},
+					{Text: "§xs[0] = 1§ works because Go grows it automatically.", Correct: false, Rationale: "Indexing past the length panics; use §append§."},
+					{Text: "§len(xs)§ panics because the slice is nil.", Correct: false, Rationale: "§len§ of a nil slice is 0."},
+				},
+				Explanation: "Nil slices (and nil maps) are readable. A nil *map* panics on write, but a nil slice is fine because §append§ returns a new slice.",
+			},
+			{
+				ID:     "m1t3q3",
 				Prompt: "Which lines compile? Select all that apply.",
 				Multi:  true,
 				Code: `var a int32 = 5
@@ -1152,7 +1086,7 @@ var t float32 = 1.5`,
 				Explanation: "Variables never convert implicitly. Untyped constants do adapt to whatever type you need.",
 			},
 			{
-				ID:     "m1t3q2",
+				ID:     "m1t3q4",
 				Prompt: "What does this print?",
 				Code: `package main
 
@@ -1174,24 +1108,111 @@ func main() {
 				Explanation: "§int / int§ truncates. Convert to §float64§ *before* dividing. And §total / parts * 2§ is §(100/7)*2 = 14*2 = 28§ — order of operations matters.",
 			},
 			{
-				ID:     "m1t3q3",
-				Prompt: "What is the value of §Wednesday§?",
-				Code: `const (
-	Sunday = iota * 10
-	Monday
-	_
-	Wednesday
-)`,
+				ID:     "m1t3q5",
+				Prompt: "Which constant declarations compile? Select all that apply.",
+				Multi:  true,
+				Code: `const Pi = 3.14159
+const Debug = true
+const Now = time.Now()
+const MaxRetries = 3
+const Ratio = 10 / 4`,
 				Options: []Option{
-					{Text: "§30§", Correct: true, Rationale: "§iota§ counts 0,1,2,3 — including the blank line — so Wednesday uses the 4th index: §3 * 10§."},
-					{Text: "§20§", Correct: false, Rationale: "That ignores the §_§ line, which still consumes an §iota§ value."},
-					{Text: "§40§", Correct: false, Rationale: "§iota§ starts at 0, so the four lines are 0,1,2,3."},
-					{Text: "It does not compile.", Correct: false, Rationale: "§_§ skips a value and is perfectly legal in a §const§ block."},
+					{Text: "§const Pi = 3.14159§", Correct: true, Rationale: "A decimal literal is computable at compile time, so it can be a constant."},
+					{Text: "§const Debug = true§", Correct: true, Rationale: "A boolean literal is a valid constant value."},
+					{Text: "§const Now = time.Now()§", Correct: false, Rationale: "§time.Now()§ only has a value when the program runs, so it cannot be computed at compile time."},
+					{Text: "§const MaxRetries = 3§", Correct: true, Rationale: "Integer literals and arithmetic on them are compile-time constant expressions."},
+					{Text: "§const Ratio = 10 / 4§", Correct: true, Rationale: "Both operands are untyped integer constants, so this is constant integer division: §Ratio§ is §2§."},
 				},
-				Explanation: "§iota§ is the line index within the §const§ block, starting at 0. §_§ still counts.",
+				Explanation: "Constants must be computable at compile time. Function calls such as §time.Now()§ are not. Constant arithmetic follows the types of its operands, so §10 / 4§ is §2§.",
 			},
 		},
 		Exercises: []Exercise{
+			{
+				// Moved here from topic 2 when zero values got their own topic.
+				ID:    "m1t2e1",
+				Title: "Warm-up: return the zero values",
+				Prompt: `Declare four variables with §var§ — an §int§, a §string§, a §bool§ and a §float64§
+— and return them *without ever assigning a value*. Let Go's zero values do the work.
+
+§§§go
+func ZeroValues() (int, string, bool, float64)
+§§§
+
+The test expects §0, "", false, 0§.
+`,
+				Starter: `package main
+
+import "fmt"
+
+// ZeroValues returns the zero value of each of the four types.
+func ZeroValues() (int, string, bool, float64) {
+	// TODO: declare the variables with var and return them
+	return 0, "", false, 0
+}
+
+func main() {
+	fmt.Println(ZeroValues())
+}
+`,
+				Tests: []File{{
+					Name: "zerovalues_test.go",
+					Content: `package main
+
+import "testing"
+
+func TestZeroValues(t *testing.T) {
+	i, s, b, f := ZeroValues()
+	if i != 0 {
+		t.Errorf("int zero value = %d, want 0", i)
+	}
+	if s != "" {
+		t.Errorf("string zero value = %q, want empty", s)
+	}
+	if len(s) != 0 {
+		t.Errorf("string zero value has length %d, want 0", len(s))
+	}
+	if b != false {
+		t.Errorf("bool zero value = %v, want false", b)
+	}
+	if f != 0 {
+		t.Errorf("float64 zero value = %v, want 0", f)
+	}
+}
+
+func TestZeroValuesAreStable(t *testing.T) {
+	i, s, b, f := ZeroValues()
+	i2, s2, b2, f2 := ZeroValues()
+	if i != i2 || s != s2 || b != b2 || f != f2 {
+		t.Fatalf("ZeroValues changed between calls: (%v, %q, %v, %v) then (%v, %q, %v, %v)", i, s, b, f, i2, s2, b2, f2)
+	}
+	if i2 != 0 || s2 != "" || b2 != false || f2 != 0 {
+		t.Fatalf("second call did not return zero values: (%v, %q, %v, %v)", i2, s2, b2, f2)
+	}
+}
+`,
+				}},
+				Hints: []string{
+					"§var i int§ declares an int and Go sets it to 0 for you.",
+					"You can return all four at once: §return i, s, b, f§.",
+					"Do not write §i := 0§ — this exercise is about the zero value.",
+				},
+				Solution: `package main
+
+import "fmt"
+
+func ZeroValues() (int, string, bool, float64) {
+	var i int
+	var s string
+	var b bool
+	var f float64
+	return i, s, b, f
+}
+
+func main() {
+	fmt.Println(ZeroValues())
+}
+`,
+			},
 			{
 				ID:    "m1t3e1",
 				Title: "Warm-up: Celsius to Fahrenheit",
@@ -1390,134 +1411,6 @@ func AveragePerItem(totalCents int, items int) float64 {
 func main() {
 	fmt.Println(TotalCents(19.99, 2))
 	fmt.Println(AveragePerItem(3998, 2))
-}
-`,
-			},
-			{
-				ID:    "m1t3e3",
-				Title: "An iota enumeration for order status",
-				Prompt: `Build an §iota§ enumeration and a function that turns each value
-back into a readable word.
-
-§§§go
-type Status int
-
-const (
-	Pending Status = iota
-	Paid
-	Shipped
-	Cancelled
-)
-
-func StatusName(s Status) string
-§§§
-
-§StatusName§ returns §"pending"§, §"paid"§, §"shipped"§ or §"cancelled"§. For any other
-value, including negatives, return §"unknown"§.
-
-Branch on the value with a §switch§ — Go's multi-way branch. Each §case§ stops on its
-own (there is no fall-through, so no §break§ is needed), and §default§ catches
-everything else:
-
-§§§go
-switch day {
-case "sat", "sun":
-	return "weekend"
-default:
-	return "unknown"
-}
-§§§
-
-(§switch§ gets its own topic later; this shape is all you need here.)
-`,
-				Starter: `package main
-
-import "fmt"
-
-type Status int
-
-const (
-	Pending Status = iota
-	Paid
-	Shipped
-	Cancelled
-)
-
-// StatusName returns the lower-case name of a status.
-func StatusName(s Status) string {
-	// TODO
-	return ""
-}
-
-func main() {
-	fmt.Println(StatusName(Pending), StatusName(Shipped), StatusName(99))
-}
-`,
-				Tests: []File{{
-					Name: "status_test.go",
-					Content: `package main
-
-import "testing"
-
-func TestStatusName(t *testing.T) {
-	cases := map[Status]string{
-		Pending:      "pending",
-		Paid:         "paid",
-		Shipped:      "shipped",
-		Cancelled:    "cancelled",
-		Status(-1):   "unknown",
-		Status(4):    "unknown",
-		Status(1000): "unknown",
-	}
-	for in, want := range cases {
-		if got := StatusName(in); got != want {
-			t.Errorf("StatusName(%d) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-func TestIotaOrder(t *testing.T) {
-	if Pending != 0 || Paid != 1 || Shipped != 2 || Cancelled != 3 {
-		t.Fatalf("iota values wrong: %d %d %d %d", Pending, Paid, Shipped, Cancelled)
-	}
-}
-`,
-				}},
-				Hints: []string{
-					"§iota§ gives Pending 0, Paid 1, Shipped 2, Cancelled 3 — you get that for free from the §const§ block.",
-					"One §case§ per named status, each returning its lower-case word; the §default§ from the prompt handles everything else.",
-					"§Status(99)§ and §Status(-1)§ match none of the named cases, so they fall to §default§.",
-				},
-				Solution: `package main
-
-import "fmt"
-
-type Status int
-
-const (
-	Pending Status = iota
-	Paid
-	Shipped
-	Cancelled
-)
-
-func StatusName(s Status) string {
-	switch s {
-	case Pending:
-		return "pending"
-	case Paid:
-		return "paid"
-	case Shipped:
-		return "shipped"
-	case Cancelled:
-		return "cancelled"
-	default:
-		return "unknown"
-	}
-}
-
-func main() {
-	fmt.Println(StatusName(Pending), StatusName(Shipped), StatusName(99))
 }
 `,
 			},
@@ -2024,6 +1917,77 @@ default:
 }
 §§§
 
+## Named values with iota
+
+Some values come from a short, fixed list: the days of the week, the states of an
+order, the levels of a logger. Other languages call this an **enumeration** and give it
+an §enum§ keyword. Go does not. The idiom is a **named type** plus a §const§ block:
+
+§§§go
+type Weekday int
+
+const (
+	Sunday Weekday = iota
+	Monday
+	Tuesday
+	Wednesday
+)
+§§§
+
+Two things are happening here.
+
+**§type Weekday int§ invents a new type.** §Weekday§ is still an §int§ underneath, but
+the compiler treats it as its own type. A function that takes a §Weekday§ cannot be
+handed a plain §int§ by accident, and its signature says what it expects.
+
+**§iota§ numbers the lines.** It starts at §0§ at the top of every §const§ block and
+increases by one for each line. The expression on the first line — §Weekday = iota§ —
+is repeated on every following line that has no value of its own. So §Sunday§ is §0§,
+§Monday§ is §1§, and so on.
+
+§§§go
+fmt.Println(Sunday, Monday, Wednesday) // 0 1 3
+§§§
+
+Now §switch§ can give those numbers readable names:
+
+§§§go
+func WeekdayName(d Weekday) string {
+	switch d {
+	case Sunday:
+		return "Sunday"
+	case Monday:
+		return "Monday"
+	case Tuesday:
+		return "Tuesday"
+	case Wednesday:
+		return "Wednesday"
+	default:
+		return "unknown"
+	}
+}
+§§§
+
+### The two details that trip people up
+
+1. **A blank line still counts.** §_§ skips a value, but §iota§ still advances:
+
+   §§§go
+   const (
+       Low = iota * 10 // 0
+       Medium          // 10
+       _               // 20 is skipped
+       High            // 30
+   )
+   §§§
+
+2. **Every §const§ block restarts at zero.** A second block's §iota§ does not continue
+   the first one.
+
+§iota§ is a convenience, not a requirement. If it makes the code harder to read, write
+the numbers explicitly with §const§. A §switch§ over those constants works exactly the
+same way.
+
 ## A complete example
 
 §§§go
@@ -2162,6 +2126,23 @@ func main() {
 					{Text: "It does not compile: §x§ is declared and not used.", Correct: false, Rationale: "§x§ *is* used, in the §Println§."},
 				},
 				Explanation: "§if stmt; cond { }§ scopes §stmt§'s variables to the entire if/else chain — and to nothing beyond it.",
+			},
+			{
+				ID:     "m1t5q4",
+				Prompt: "What is the value of §High§?",
+				Code: `const (
+	Low = iota * 10
+	Medium
+	_
+	High
+)`,
+				Options: []Option{
+					{Text: "§30§", Correct: true, Rationale: "§iota§ counts 0, 1, 2, 3 — the blank line still consumes a value — so §High§ is §3 * 10§."},
+					{Text: "§20§", Correct: false, Rationale: "That ignores the §_§ line, which still advances §iota§."},
+					{Text: "§40§", Correct: false, Rationale: "§iota§ starts at 0, so the four lines are 0, 1, 2, 3."},
+					{Text: "It does not compile.", Correct: false, Rationale: "§_§ skips a value and is perfectly legal in a §const§ block."},
+				},
+				Explanation: "§iota§ is the line index within the §const§ block, starting at 0. §_§ skips the name but still counts as a line.",
 			},
 		},
 		Exercises: []Exercise{
@@ -2436,6 +2417,125 @@ func Max3Switch(a, b, c int) int {
 
 func main() {
 	fmt.Println(Max3(1, 9, 4), Max3Switch(1, 9, 4))
+}
+`,
+			},
+			{
+				// Moved here from topic 3: the enumeration uses switch, which this
+				// topic teaches.
+				ID:    "m1t3e3",
+				Title: "An iota enumeration for order status",
+				Prompt: `Build an §iota§ enumeration and a function that turns each value
+back into a readable word.
+
+§§§go
+type Status int
+
+const (
+	Pending Status = iota
+	Paid
+	Shipped
+	Cancelled
+)
+
+func StatusName(s Status) string
+§§§
+
+§StatusName§ returns §"pending"§, §"paid"§, §"shipped"§ or §"cancelled"§. For any other
+value, including negatives, return §"unknown"§.
+
+Use the §switch§ shape you have just learned: one §case§ per status, plus a §default§
+for everything else. Each §case§ stops on its own, so no §break§ is needed.
+`,
+				Starter: `package main
+
+import "fmt"
+
+type Status int
+
+const (
+	Pending Status = iota
+	Paid
+	Shipped
+	Cancelled
+)
+
+// StatusName returns the lower-case name of a status.
+func StatusName(s Status) string {
+	// TODO
+	return ""
+}
+
+func main() {
+	fmt.Println(StatusName(Pending), StatusName(Shipped), StatusName(99))
+}
+`,
+				Tests: []File{{
+					Name: "status_test.go",
+					Content: `package main
+
+import "testing"
+
+func TestStatusName(t *testing.T) {
+	cases := map[Status]string{
+		Pending:      "pending",
+		Paid:         "paid",
+		Shipped:      "shipped",
+		Cancelled:    "cancelled",
+		Status(-1):   "unknown",
+		Status(4):    "unknown",
+		Status(99):   "unknown",
+		Status(1000): "unknown",
+	}
+	for in, want := range cases {
+		if got := StatusName(in); got != want {
+			t.Errorf("StatusName(%d) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestIotaOrder(t *testing.T) {
+	if Pending != 0 || Paid != 1 || Shipped != 2 || Cancelled != 3 {
+		t.Fatalf("iota values wrong: %d %d %d %d", Pending, Paid, Shipped, Cancelled)
+	}
+}
+`,
+				}},
+				Hints: []string{
+					"§iota§ gives Pending 0, Paid 1, Shipped 2, Cancelled 3 — you get that for free from the §const§ block.",
+					"One §case§ per named status, each returning its lower-case word; the §default§ handles everything else.",
+					"§Status(99)§ and §Status(-1)§ match none of the named cases, so they fall to §default§.",
+				},
+				Solution: `package main
+
+import "fmt"
+
+type Status int
+
+const (
+	Pending Status = iota
+	Paid
+	Shipped
+	Cancelled
+)
+
+func StatusName(s Status) string {
+	switch s {
+	case Pending:
+		return "pending"
+	case Paid:
+		return "paid"
+	case Shipped:
+		return "shipped"
+	case Cancelled:
+		return "cancelled"
+	default:
+		return "unknown"
+	}
+}
+
+func main() {
+	fmt.Println(StatusName(Pending), StatusName(Shipped), StatusName(99))
 }
 `,
 			},
