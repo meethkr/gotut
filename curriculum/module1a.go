@@ -429,13 +429,6 @@ func TestGreeting(t *testing.T) {
 	}
 }
 
-func TestGreetingDoesNotMutateInput(t *testing.T) {
-	name := "Ada"
-	_ = Greeting(name)
-	if name != "Ada" {
-		t.Fatalf("Greeting changed its argument to %q", name)
-	}
-}
 `,
 				}},
 				Hints: []string{

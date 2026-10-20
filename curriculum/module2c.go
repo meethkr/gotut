@@ -3736,7 +3736,7 @@ func TestStdDevTable(t *testing.T) {
 					"§Median§: §sorted := make([]float64, len(nums)); copy(sorted, nums); sort.Float64s(sorted)§.",
 					"Even count: §(sorted[n/2-1] + sorted[n/2]) / 2§. Odd count: §sorted[n/2]§.",
 					"§StdDev§ wraps the result in §math.Sqrt§.",
-					"Run §Check§ after each fix — the failures narrow down as you go, which is the workflow this exercise is teaching.",
+					"Press §Test§ after each fix — the failures narrow down as you go, which is the workflow this exercise is teaching.",
 				},
 				Solution: `package main
 

@@ -1027,7 +1027,7 @@
       return;
     }
 
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
       const start = editor.selectionStart;
       const value = editor.value;
       const lineStart = value.lastIndexOf("\n", start - 1) + 1;
