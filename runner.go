@@ -242,39 +242,70 @@ func sandboxEnv() []string {
 
 var (
 	reTestRun  = regexp.MustCompile(`(?m)^\s*===\s+RUN\s+(\S+)`)
+	reTestMeta = regexp.MustCompile(`(?m)^\s*===\s+`)
 	reTestPass = regexp.MustCompile(`(?m)^\s*---\s+PASS:\s+(\S+)`)
 	reTestFail = regexp.MustCompile(`(?m)^\s*---\s+FAIL:\s+(\S+)`)
 	reTestSkip = regexp.MustCompile(`(?m)^\s*---\s+SKIP:\s+(\S+)`)
 )
 
 // parseTests turns `go test -v` output into a list of cases in execution order.
+// Test log lines go before the final "--- FAIL" marker, so the parser keeps the
+// lines that follow each "=== RUN" and attaches them to that case. The UI uses
+// them to show why a test failed without making the learner read the raw log.
 func parseTests(out string) []TestResult {
 	order := []string{}
+	index := map[string]int{}
 	pass := map[string]bool{}
-	seen := map[string]bool{}
-	for _, m := range reTestRun.FindAllStringSubmatch(out, -1) {
-		name := m[1]
-		if !seen[name] {
-			seen[name] = true
-			order = append(order, name)
-		}
-	}
-	for _, m := range reTestPass.FindAllStringSubmatch(out, -1) {
-		pass[m[1]] = true
-	}
 	fail := map[string]bool{}
-	for _, m := range reTestFail.FindAllStringSubmatch(out, -1) {
-		fail[m[1]] = true
-	}
-	for _, m := range reTestSkip.FindAllStringSubmatch(out, -1) {
-		fail[m[1]] = true
+	output := map[string][]string{}
+	current := ""
+
+	for _, raw := range strings.Split(out, "\n") {
+		line := strings.TrimRight(raw, "\r")
+
+		if m := reTestRun.FindStringSubmatch(line); m != nil {
+			current = m[1]
+			if _, ok := index[current]; !ok {
+				index[current] = len(order)
+				order = append(order, current)
+			}
+			continue
+		}
+		if reTestMeta.MatchString(line) {
+			continue
+		}
+		if m := reTestPass.FindStringSubmatch(line); m != nil {
+			pass[m[1]] = true
+			current = ""
+			continue
+		}
+		if m := reTestFail.FindStringSubmatch(line); m != nil {
+			fail[m[1]] = true
+			current = ""
+			continue
+		}
+		if m := reTestSkip.FindStringSubmatch(line); m != nil {
+			fail[m[1]] = true
+			current = ""
+			continue
+		}
+
+		// Test output is indented by four spaces (subtests by eight). Keep the
+		// relative indentation after removing only the standard prefix.
+		if current != "" && (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")) {
+			if strings.HasPrefix(line, "    ") {
+				line = line[4:]
+			}
+			output[current] = append(output[current], strings.TrimRight(line, " \t"))
+		}
 	}
 
 	results := make([]TestResult, 0, len(order))
 	for _, name := range order {
 		results = append(results, TestResult{
-			Name: name,
-			Pass: pass[name] && !fail[name],
+			Name:   name,
+			Pass:   pass[name] && !fail[name],
+			Output: strings.Join(output[name], "\n"),
 		})
 	}
 	return results
